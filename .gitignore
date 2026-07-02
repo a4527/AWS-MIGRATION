@@ -1,0 +1,11 @@
+.gradle/
+build/
+backend/.gradle/
+backend/build/
+.m2/
+.tools/
+.agents/
+.codex/
+
+*.class
+*.log
