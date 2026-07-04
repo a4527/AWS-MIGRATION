@@ -14,6 +14,9 @@
 - Redis 연결값은 `REDIS_HOST`, `REDIS_PORT` 환경변수로 주입한다.
 - MinIO 연결값은 `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET` 환경변수로 주입한다.
 - Day 6 이후 PostgreSQL, Redis, MinIO, Nginx는 Docker Compose로 통합한다.
+- Docker Compose 실행 시 외부 API 진입점은 Nginx이며 기본 포트는 `http://localhost:8080`이다.
+- MinIO 콘솔은 기본 포트 `http://localhost:9001`로 노출한다.
+- `.env.example`을 기준으로 로컬 `.env`를 만들면 포트, 비밀번호, JWT secret, 업로드 제한을 변경할 수 있다.
 
 예시:
 
@@ -24,11 +27,36 @@ SPRING_PROFILES_ACTIVE=postgres,redis,minio ./gradlew bootRun
 
 ## 온프레미스
 
-- Dockerfile 작성
-- Docker Compose로 통합 실행
-- Nginx reverse proxy 적용
-- 환경변수와 시크릿 분리
+- `backend/Dockerfile`로 Spring Boot 애플리케이션 이미지를 빌드한다.
+- `docker-compose.yml`로 PostgreSQL, Redis, MinIO, Spring Boot, Nginx를 통합 실행한다.
+- Nginx는 `/api/**`와 `/actuator/health` 요청을 Spring Boot 컨테이너로 전달한다.
+- 환경변수와 시크릿은 Compose 변수로 분리하고, 기본값은 로컬 개발용으로만 사용한다.
 - JWT secret은 로컬 설정 파일에 고정하지 않고 환경변수 또는 compose secret으로 주입한다.
+
+실행:
+
+```bash
+docker compose up --build
+```
+
+상태 확인:
+
+```bash
+curl http://localhost:8080/api/health
+curl http://localhost:8080/actuator/health
+```
+
+중지:
+
+```bash
+docker compose down
+```
+
+데이터 볼륨까지 초기화해야 할 때만 다음 명령을 사용한다.
+
+```bash
+docker compose down -v
+```
 
 ## AWS
 

@@ -43,19 +43,19 @@
 
 ## Day 6 - Docker Compose 및 Nginx
 
-- [ ] Dockerfile 작성
-- [ ] Docker Compose 구성
-- [ ] Nginx reverse proxy 설정
-- [ ] 환경변수 분리
-- [ ] 로컬 통합 실행 검증
+- [o] Dockerfile 작성
+- [o] Docker Compose 구성
+- [o] Nginx reverse proxy 설정
+- [o] 환경변수 분리
+- [o] 로컬 통합 실행 검증
 
 ## Day 7 - 온프레미스 검증 및 문서화
 
-- [ ] 기능 테스트
-- [ ] 장애 시나리오 점검
-- [ ] API 문서 정리
-- [ ] 트러블슈팅 초안 작성
-- [ ] 온프레미스 아키텍처 문서 마무리
+- [o] 기능 테스트
+- [o] 장애 시나리오 점검
+- [o] API 문서 정리
+- [o] 트러블슈팅 초안 작성
+- [o] 온프레미스 아키텍처 문서 마무리
 
 ## Day 8 - AWS 인프라 설계 및 Terraform 시작
 

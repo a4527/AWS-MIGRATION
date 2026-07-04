@@ -44,6 +44,7 @@ project/
 - `docs/08_PORTFOLIO.md`: 프로젝트 소개, 기술 선택 이유, 성과 정리
 - `docs/09_WORK_LOG.md`: Day별 실제 작업 내역, 산출물, 검증 결과
 - `docs/10_SPRING_BOOT_STUDY.md`: 현재 프로젝트를 예시로 정리한 Spring Boot 학습 교보재
+- `docs/11_ONPREM_MANUAL_TEST.md`: Docker Compose 온프레미스 환경 수동 검증 절차
 
 ## 진행 순서
 
@@ -55,3 +56,23 @@ project/
 6. EKS 및 저장소 이전
 7. CI/CD, 모니터링, 보안 정리
 8. 포트폴리오 문서화
+
+## 온프레미스 통합 실행
+
+Day 6 기준 로컬 온프레미스 스택은 Docker Compose로 실행한다.
+
+```bash
+docker compose up --build
+```
+
+API 진입점:
+
+```text
+http://localhost:8080
+```
+
+MinIO 콘솔:
+
+```text
+http://localhost:9001
+```

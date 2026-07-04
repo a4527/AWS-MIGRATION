@@ -81,3 +81,21 @@
 - `minio` 프로필에서 `FileStorage` 구현이 로컬 파일 시스템에서 MinIO object storage로 전환된다.
 - MinIO의 `storagePath`는 object key로 저장하므로 Day 9 S3 전환 시 S3 object key 계약으로 그대로 이어갈 수 있다.
 - AWS 전환 시 PostgreSQL은 Aurora PostgreSQL, Redis는 ElastiCache, MinIO는 S3 구현체로 교체한다.
+
+## Day 6 구현 기준
+
+- 온프레미스 실행 단위는 Docker Compose로 고정하고, PostgreSQL, Redis, MinIO, Spring Boot, Nginx를 하나의 로컬 스택으로 실행한다.
+- 외부 트래픽은 Nginx를 통해 `/api/**`와 `/actuator/health`만 Spring Boot로 전달한다.
+- Spring Boot 컨테이너는 `postgres,redis,minio` 프로필을 활성화해 온프레미스의 실제 저장소 조합을 사용한다.
+- DB, Redis, MinIO, JWT, 업로드 제한 설정은 환경변수로 분리해 Kubernetes ConfigMap/Secret 또는 AWS Secrets Manager로 옮길 수 있게 한다.
+- Compose의 PostgreSQL, Redis, MinIO 볼륨은 AWS 전환 전 데이터 검증 기준으로 사용한다.
+- AWS 전환 시 Nginx reverse proxy 역할은 ALB Ingress 또는 ALB로 대체하고, 애플리케이션 컨테이너 이미지는 ECR에 푸시한다.
+
+## Day 7 검증 기준
+
+- Docker Compose 온프레미스 환경에서 검증한 API 계약을 AWS 전환 후에도 유지한다.
+- PostgreSQL `users`, `files` 데이터는 Aurora PostgreSQL 이전 검증 기준으로 사용한다.
+- MinIO object key와 `files.storage_path` 계약은 S3 object key 계약으로 이어간다.
+- Redis 캐시 키 `files:metadata:{fileId}`는 ElastiCache 전환 후에도 동일하게 유지한다.
+- Nginx health/API 진입점 검증은 ALB health check와 Ingress 라우팅 검증 기준으로 전환한다.
+- 장애 시나리오에서 확인한 DB, Redis, object storage 의존성은 AWS 보안 그룹, subnet, IAM, readiness/liveness probe 설계에 반영한다.

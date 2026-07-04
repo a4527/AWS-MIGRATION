@@ -287,23 +287,108 @@ BUILD SUCCESSFUL
 
 ## Day 6 - Docker Compose 및 Nginx
 
-### 예정 작업
+### 완료 작업
 
 - Dockerfile 작성
 - Docker Compose 구성
 - Nginx reverse proxy 설정
 - 환경변수 분리
-- 로컬 통합 실행 검증
+- Docker Compose 파일 YAML 구조 검증
+- Docker Compose 기반 로컬 통합 실행 검증
+- Nginx를 통한 `/api/health`, `/actuator/health` 응답 검증
+- 애플리케이션 설정의 JWT, 서버 포트, 파일 업로드 제한, 로컬 저장 경로를 환경변수로 주입 가능하게 변경
+- Day 6 완료 상태를 `TASKS.md`에 반영했다.
+- 배포, 아키텍처, 마이그레이션 문서를 Day 6 구현 기준에 맞게 갱신했다.
+
+### 산출물
+
+- `backend/Dockerfile`
+- `backend/.dockerignore`
+- `.dockerignore`
+- `docker-compose.yml`
+- `.env.example`
+- `nginx/conf.d/default.conf`
+
+### 결정 사항
+
+- 온프레미스 통합 실행은 Docker Compose를 기준으로 한다.
+- 외부 API 진입점은 Nginx이며 기본 호스트 포트는 `8080`이다.
+- 백엔드 컨테이너는 `postgres,redis,minio` 프로필을 활성화한다.
+- PostgreSQL과 Redis는 healthcheck를 통해 준비 상태를 확인한 뒤 백엔드를 시작한다.
+- MinIO 버킷은 기존 `MinioFileStorage`가 업로드 시점에 생성한다.
+- Compose 기본 환경변수는 개발용이며 운영에서는 `.env`, compose secret, 또는 배포 환경의 secret 저장소로 교체한다.
+
+### 검증
+
+```bash
+cd backend
+./gradlew test
+./gradlew bootJar
+
+cd ..
+docker compose config
+ruby -e 'require "yaml"; YAML.load_file("docker-compose.yml"); puts "YAML OK"'
+docker compose up --build -d
+docker compose ps
+curl -i http://localhost:8080/api/health
+curl -i http://localhost:8080/actuator/health
+```
+
+검증 결과:
+
+```text
+BUILD SUCCESSFUL
+bootJar BUILD SUCCESSFUL
+YAML OK
+docker compose config 성공
+backend image build 성공
+postgres, redis, minio, backend, nginx 컨테이너 기동 성공
+GET /api/health 200 OK
+GET /actuator/health 200 OK
+```
 
 ## Day 7 - 온프레미스 검증 및 문서화
 
-### 예정 작업
+### 완료 작업
 
 - 기능 테스트
 - 장애 시나리오 점검
 - API 문서 정리
 - 트러블슈팅 초안 작성
 - 온프레미스 아키텍처 문서 마무리
+
+### 산출물
+
+- `docs/11_ONPREM_MANUAL_TEST.md`
+- `docs/04_API_SPEC.md`
+- `docs/02_ARCHITECTURE.md`
+- `docs/05_MIGRATION.md`
+- `docs/07_TROUBLESHOOTING.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- Day 7 검증은 자동화 스크립트가 아니라 사용자가 직접 실행하는 수동 체크리스트 기반으로 진행한다.
+- 기능 테스트는 Nginx 진입점 `localhost:8080`을 기준으로 수행한다.
+- 저장소 검증은 PostgreSQL 테이블, Redis 캐시 키, MinIO 버킷/object를 각각 직접 확인하는 방식으로 둔다.
+- 장애 시나리오는 `docs/11_ONPREM_MANUAL_TEST.md`에 수동 점검 절차로 정리한다.
+- Redis는 캐시 계층이지만 현재 구현에서는 Redis 장애가 API 오류로 이어질 수 있으므로 운영 개선 후보로 기록한다.
+
+### 검증
+
+사용자 수동 기능 테스트 완료.
+
+검증 범위:
+
+- Compose 기반 서비스 기동
+- Health API
+- 회원가입과 로그인
+- JWT 기반 사용자 조회와 프로필 수정
+- 파일 업로드, 목록 조회, 단건 조회, 다운로드, 삭제
+- PostgreSQL 사용자/파일 메타데이터 확인
+- Redis 파일 메타데이터 캐시 확인
+- MinIO 버킷과 object 확인
+- 인증 누락, 확장자 제한, 권한 부족 실패 케이스 확인
 
 ## Day 8 - AWS 인프라 설계 및 Terraform 시작
 

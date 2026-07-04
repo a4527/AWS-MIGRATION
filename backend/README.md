@@ -52,9 +52,25 @@ cd backend
 
 기본 실행은 H2 datasource를 부트스트랩하지만, 도메인 저장소는 인메모리 구현을 사용하고 파일은 로컬 디스크에 저장한다.
 
+## Docker Compose 통합 실행
+
+Day 6 기준 온프레미스 통합 실행은 저장소 루트에서 Docker Compose를 사용한다.
+
+```bash
+docker compose up --build
+```
+
+Nginx가 외부 요청을 받으며 API는 `http://localhost:8080`에서 확인한다.
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+Compose 실행 시 백엔드는 `postgres,redis,minio` 프로필을 사용한다. PostgreSQL, Redis, MinIO, JWT secret, 업로드 제한은 루트 `.env.example` 값을 기준으로 조정할 수 있다.
+
 PostgreSQL, Redis, MinIO를 사용하는 실행 예시:
 
-먼저 외부 저장소를 로컬 컨테이너로 실행한다. Day 6 전에는 `docker-compose.yml`이 없으므로 각 서버를 개별 컨테이너로 띄운다.
+Compose를 사용하지 않고 백엔드를 Gradle로 직접 실행하려면 외부 저장소를 개별 컨테이너로 띄운다.
 
 ```bash
 docker run --name fileshare-postgres \

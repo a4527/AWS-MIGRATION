@@ -11,6 +11,8 @@ Client
   -> MinIO
 ```
 
+Day 6 기준 각 구성요소는 Docker Compose 서비스로 실행한다. Client의 외부 진입점은 Nginx이고, Spring Boot 컨테이너는 내부 네트워크에서 PostgreSQL, Redis, MinIO에 접근한다.
+
 ## 데이터 흐름
 
 ### 인증 흐름
@@ -62,6 +64,14 @@ Client
 - Redis: 자주 조회되는 메타데이터 캐시, 단기 조회 성능 개선
 - MinIO: 실제 파일 바이너리 저장소
 
+### Docker Compose 서비스
+
+- `nginx`: 호스트 `8080` 포트에서 요청을 수신하고 백엔드로 프록시한다.
+- `backend`: Spring Boot API를 실행하며 `postgres,redis,minio` 프로필을 사용한다.
+- `postgres`: 사용자와 파일 메타데이터를 저장한다.
+- `redis`: 파일 단건 메타데이터 캐시를 저장한다.
+- `minio`: 파일 바이너리를 object key 기준으로 저장한다.
+
 ## 책임 분리
 
 - 요청 라우팅과 연결 관리는 Nginx가 담당한다.
@@ -69,6 +79,24 @@ Client
 - 영속 데이터는 PostgreSQL이 담당한다.
 - 캐시성 데이터는 Redis가 담당한다.
 - 파일 본문은 MinIO가 담당한다.
+
+## 온프레미스 운영 기준
+
+- 외부 API 진입점은 Nginx 하나로 유지한다.
+- Spring Boot, PostgreSQL, Redis, MinIO는 Docker Compose 내부 네트워크에서 서비스 이름으로 통신한다.
+- 운영에 가까운 구성에서는 PostgreSQL, Redis, MinIO의 호스트 포트 공개를 제거하고 내부 통신만 허용한다.
+- 로컬 검증 단계에서는 DB/캐시/스토리지 확인 편의를 위해 `5432`, `6379`, `9000`, `9001` 포트를 노출한다.
+- PostgreSQL, Redis, MinIO 데이터는 Docker volume에 저장해 컨테이너 재생성 이후에도 유지한다.
+- 파일 삭제는 논리 삭제이며 MinIO object의 물리 정리는 별도 운영 절차로 분리한다.
+- JWT secret, DB 비밀번호, MinIO 계정은 운영 배포에서 `.env` 또는 secret 저장소로 분리한다.
+
+## Day 7 검증 결과 기준
+
+- Nginx를 통한 health, 인증, 사용자, 파일 API 호출 흐름을 검증한다.
+- PostgreSQL `users`, `files` 테이블에 사용자와 파일 메타데이터가 저장되는지 확인한다.
+- Redis `files:metadata:{fileId}` 캐시 키 생성과 TTL을 확인한다.
+- MinIO `files` 버킷에 업로드 object가 저장되는지 확인한다.
+- 인증 누락, 잘못된 확장자, 일반 사용자 권한 부족 등 실패 응답이 API 계약과 맞는지 확인한다.
 
 ## AWS Architecture
 

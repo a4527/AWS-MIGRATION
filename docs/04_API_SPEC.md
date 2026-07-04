@@ -472,3 +472,14 @@ description: project plan
 - `GET /api/files/{id}`와 `GET /api/files/{id}/download`는 소유자 또는 `ADMIN`만 접근할 수 있다.
 - `DELETE /api/files/{id}`는 물리 파일을 즉시 삭제하지 않고 메타데이터 상태를 `deleted`로 변경한다.
 - Day 5 이후 파일 메타데이터 저장소는 PostgreSQL/JPA로, 파일 바이너리 저장소는 MinIO로 교체한다.
+
+## Day 7 온프레미스 검증 기준
+
+- Docker Compose 실행 환경에서도 외부 API 계약은 동일하게 유지한다.
+- Client는 `http://localhost:8080`의 Nginx 진입점으로만 API를 호출한다.
+- `postgres,redis,minio` 프로필 활성화 시 사용자와 파일 메타데이터는 PostgreSQL에 저장된다.
+- 파일 바이너리는 MinIO `files` 버킷에 object key 기준으로 저장된다.
+- 파일 단건 조회와 업로드 이후 Redis에 `files:metadata:{fileId}` 형식의 캐시가 생성될 수 있다.
+- 같은 파일을 중복 업로드하면 현재 구현에서는 새 파일로 취급하며, 별도의 파일명/hash 중복 제한은 없다.
+- `POST /api/auth/refresh`, `POST /api/auth/logout`은 API 문서상 예정 계약이며 Day 7 온프레미스 검증 대상에서 제외한다.
+- 수동 검증 절차는 `docs/11_ONPREM_MANUAL_TEST.md`를 기준으로 한다.

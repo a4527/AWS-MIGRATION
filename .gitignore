@@ -2,6 +2,7 @@
 build/
 backend/.gradle/
 backend/build/
+backend/bin/
 .m2/
 .tools/
 .agents/
@@ -9,3 +10,7 @@ backend/build/
 
 *.class
 *.log
+
+# Local environment and manual test artifacts
+.env
+sample.exe
