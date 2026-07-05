@@ -8,7 +8,7 @@ Spring Boot 기반 파일 공유 API 구현 영역입니다.
 - Gradle 8.x
 - Spring Boot 3.3.x
 - Spring Web, Validation, Security, Actuator
-- Spring Data JPA, PostgreSQL, Redis, MinIO
+- Spring Data JPA, PostgreSQL, Redis, MinIO, Amazon S3
 
 ## 패키지 구조
 
@@ -121,6 +121,7 @@ SPRING_PROFILES_ACTIVE=postgres,redis,minio ./gradlew bootRun
 - `postgres`: 사용자와 파일 메타데이터를 JPA/PostgreSQL에 저장한다.
 - `redis`: 파일 단건 메타데이터를 `files:metadata:{fileId}` 키로 캐시한다.
 - `minio`: 실제 파일 바이너리를 MinIO 버킷에 저장한다.
+- `s3`: 실제 파일 바이너리를 Amazon S3 버킷에 저장한다.
 
 ### PostgreSQL, Redis, MinIO 데이터 확인
 

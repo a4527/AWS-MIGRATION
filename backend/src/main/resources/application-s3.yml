@@ -1,0 +1,6 @@
+app:
+  storage:
+    type: s3
+    s3:
+      region: ${AWS_REGION:ap-northeast-2}
+      bucket: ${S3_BUCKET:fileshare-dev-uploaded-files}

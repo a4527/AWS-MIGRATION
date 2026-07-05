@@ -101,11 +101,12 @@ Day 6 기준 각 구성요소는 Docker Compose 서비스로 실행한다. Clien
 ## AWS Architecture
 
 ```text
-Route53
-  -> ALB
-  -> Amazon EKS
-  -> Aurora PostgreSQL
-  -> ElastiCache
+Client
+  -> Route53
+  -> ALB (public subnet)
+  -> Amazon ECS Fargate (private subnet)
+  -> Aurora PostgreSQL (database subnet)
+  -> ElastiCache Redis (database subnet)
   -> Amazon S3
   -> Lambda
   -> CloudWatch
@@ -115,12 +116,43 @@ Route53
 
 - Route53: 도메인 라우팅
 - ALB: HTTPS 진입점 및 트래픽 분산
-- EKS: 애플리케이션 실행 환경
+- ECS Fargate: Spring Boot 애플리케이션 실행 환경
+- ECR: Spring Boot 컨테이너 이미지 저장소
+- IAM: ECS task, 애플리케이션, Lambda가 AWS 리소스에 접근하기 위한 권한 경계
 - Aurora: 관리형 관계형 DB
 - ElastiCache: 관리형 캐시
 - S3: 파일 저장소 및 이벤트 발생 지점
 - Lambda: S3 이벤트 기반 바이러스 검사, 메타데이터 추출, 비동기 보조 작업
 - CloudWatch: 로그, 메트릭, 알람
+
+### Day 8 AWS 네트워크 설계
+
+- VPC CIDR은 개발 환경 기준 `10.20.0.0/16`으로 둔다.
+- Public subnet은 2개 AZ에 배치하고 ALB와 NAT Gateway를 둔다.
+- Private subnet은 2개 AZ에 배치하고 ECS Fargate task를 둔다.
+- Database subnet은 2개 AZ에 배치하고 Aurora PostgreSQL과 ElastiCache Redis를 둔다.
+- Database subnet은 기본 인터넷 라우트를 두지 않는다.
+- 개발 비용 절감을 위해 Day 8 Terraform 초안은 NAT Gateway 1개로 시작한다. 운영 환경은 AZ별 NAT Gateway 구성을 검토한다.
+
+### Day 8 AWS 리소스 범위
+
+- Terraform 환경은 `terraform/environments/dev`에서 시작한다.
+- 공통 모듈은 `terraform/modules` 아래 `vpc`, `ecr`, `s3`, `iam`으로 분리한다.
+- ECS, ALB, Route53, ACM, Aurora, ElastiCache, Lambda, CloudWatch는 Day 9 이후 모듈로 확장한다.
+- S3 bucket은 public access block, SSE-S3 암호화, versioning, multipart upload 정리 정책을 기본값으로 둔다.
+- ECR은 backend image repository와 최근 이미지 20개 보관 lifecycle policy를 둔다.
+- 애플리케이션 IAM은 Day 8에서는 S3 접근 policy만 정의하고, Day 9 ECS task role에 연결한다.
+
+### Day 9 AWS 리소스 범위
+
+- Terraform 모듈은 `security-groups`, `ecs`, `aurora`, `elasticache`를 추가한다.
+- Security Group은 ALB, application runtime, Aurora PostgreSQL, Redis 용도로 분리한다.
+- Application SG는 ALB SG에서 오는 8080 트래픽을 허용하고, Aurora SG와 Redis SG는 application SG에서 오는 포트만 허용한다.
+- ECS는 private subnet에 Fargate service를 두고, 애플리케이션 task role을 생성한다.
+- 애플리케이션 task role에는 S3 업로드 버킷 접근 policy를 attach한다.
+- Aurora PostgreSQL은 database subnet group에 배치하고 storage encryption과 Serverless v2 scaling을 사용한다.
+- ElastiCache Redis는 database subnet group에 배치하고 저장/전송 암호화를 켠다.
+- Spring Boot는 `s3` profile에서 S3 bucket을 직접 사용하며, `storagePath`는 MinIO와 동일하게 object key로 유지한다.
 
 ## 서버리스 책임
 
@@ -136,7 +168,7 @@ Route53
 - 저장소는 MinIO에서 S3로 교체한다.
 - DB는 PostgreSQL에서 Aurora PostgreSQL로 교체한다.
 - 캐시는 Redis에서 ElastiCache로 교체한다.
-- 실행 환경은 Docker Compose에서 EKS로 교체한다.
+- 실행 환경은 Docker Compose에서 ECS Fargate로 교체한다.
 
 ## 마이그레이션 원칙
 
@@ -144,7 +176,7 @@ Route53
 - 파일 저장 방식은 MinIO에서 S3로 교체한다.
 - DB는 PostgreSQL 호환성을 유지한 채 Aurora로 이동한다.
 - 캐시는 Redis에서 ElastiCache로 전환한다.
-- 배포 방식은 Docker Compose에서 Kubernetes로 변경한다.
+- 배포 방식은 Docker Compose에서 ECS service 배포로 변경한다.
 
 ## Day 1 기준
 

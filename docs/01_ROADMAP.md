@@ -109,7 +109,7 @@
 ### Day 8: AWS 인프라 설계 및 Terraform 시작
 
 - VPC 설계
-- EKS, ECR, IAM, ALB, Route53, ACM 범위 정의
+- ECS, ECR, IAM, ALB, Route53, ACM 범위 정의
 - Terraform 프로젝트 구조 생성
 - 환경별 변수 체계 설계
 
@@ -118,9 +118,9 @@
 - `terraform/` 기본 구조
 - AWS 인프라 설계 문서
 
-### Day 9: EKS 및 데이터/스토리지 이전
+### Day 9: ECS 및 데이터/스토리지 이전
 
-- EKS 클러스터 배포
+- ECS 클러스터와 Fargate 서비스 배포
 - Aurora PostgreSQL 구성
 - ElastiCache 계획 반영
 - S3 업로드 구조로 전환
@@ -130,17 +130,17 @@
 
 - AWS 데이터/스토리지 마이그레이션 설계
 
-### Day 10: Kubernetes 배포 및 CI/CD
+### Day 10: ECS 배포 및 CI/CD
 
-- Kubernetes 매니페스트 작성
+- ECS task definition 배포 흐름 작성
 - GitHub Actions CI/CD 구축
 - ECR 빌드/푸시 연동
-- EKS 배포 자동화
+- ECS service 배포 자동화
 
 산출물:
 
 - CI/CD 파이프라인
-- EKS 배포 흐름
+- ECS 배포 흐름
 
 ### Day 11: Lambda, 모니터링, 스케일링
 
@@ -194,7 +194,7 @@
 ## 일정 리스크
 
 - AWS 인프라 생성 권한 부족
-- EKS 구축 시간 지연
+- ECS/ALB 구성 시간 지연
 - S3/Aurora 전환 중 데이터 불일치
 - CI/CD와 보안 정책 조정 지연
 

@@ -14,3 +14,14 @@ backend/bin/
 # Local environment and manual test artifacts
 .env
 sample.exe
+
+# Terraform local state and machine-specific files
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json

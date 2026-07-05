@@ -1,6 +1,6 @@
 # Enterprise File Sharing Platform Modernization
 
-Docker Compose 기반 온프레미스 파일 공유 플랫폼을 먼저 구축하고, 이후 AWS(EKS, Lambda, Aurora, S3 등)로 마이그레이션하는 2주 프로젝트입니다.
+Docker Compose 기반 온프레미스 파일 공유 플랫폼을 먼저 구축하고, 이후 AWS(ECS Fargate, Lambda, Aurora, S3 등)로 마이그레이션하는 2주 프로젝트입니다.
 
 ## 목표
 
@@ -25,7 +25,6 @@ project/
 │   └── 09_WORK_LOG.md
 ├── backend/
 ├── terraform/
-├── kubernetes/
 ├── README.md
 ├── AGENTS.md
 └── TASKS.md
@@ -39,12 +38,14 @@ project/
 - `docs/03_DATABASE.md`: ERD, 테이블 정의, 마이그레이션 고려사항
 - `docs/04_API_SPEC.md`: 인증/파일/사용자 API 명세
 - `docs/05_MIGRATION.md`: MinIO -> S3, PostgreSQL -> Aurora, Redis -> ElastiCache 전환 전략
-- `docs/06_DEPLOYMENT.md`: Docker Compose, Kubernetes, Terraform, CI/CD 배포 방식
+- `docs/06_DEPLOYMENT.md`: Docker Compose, ECS, Terraform, CI/CD 배포 방식
 - `docs/07_TROUBLESHOOTING.md`: 구현 및 운영 중 자주 발생하는 이슈와 해결법
 - `docs/08_PORTFOLIO.md`: 프로젝트 소개, 기술 선택 이유, 성과 정리
 - `docs/09_WORK_LOG.md`: Day별 실제 작업 내역, 산출물, 검증 결과
 - `docs/10_SPRING_BOOT_STUDY.md`: 현재 프로젝트를 예시로 정리한 Spring Boot 학습 교보재
 - `docs/11_ONPREM_MANUAL_TEST.md`: Docker Compose 온프레미스 환경 수동 검증 절차
+- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`: Terraform 기반 AWS 인프라 설계 1차 정리
+- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`: Terraform 실행, GitHub Actions 배포, AWS 기능 테스트 절차
 
 ## 진행 순서
 
@@ -53,7 +54,7 @@ project/
 3. 백엔드 기능 구현
 4. 온프레미스 배포
 5. AWS 인프라 구축
-6. EKS 및 저장소 이전
+6. ECS 및 저장소 이전
 7. CI/CD, 모니터링, 보안 정리
 8. 포트폴리오 문서화
 

@@ -392,31 +392,150 @@ GET /actuator/health 200 OK
 
 ## Day 8 - AWS 인프라 설계 및 Terraform 시작
 
-### 예정 작업
+### 완료 작업
 
 - VPC 설계
-- EKS, ECR, IAM, ALB, Route53, ACM 범위 정의
+- ECS, ECR, IAM, ALB, Route53, ACM 범위 정의
 - Terraform 프로젝트 구조 생성
 - 환경별 변수 체계 설계
+- Terraform `dev` 환경 파일 작성
+- VPC, ECR, S3, IAM 기본 모듈 작성
+- Terraform state, tfvars, provider lock 파일 관련 ignore 규칙 보강
+- 아키텍처, 배포, 마이그레이션 문서를 Day 8 설계 기준으로 갱신
+- Day 8 완료 상태를 `TASKS.md`에 반영했다.
 
-## Day 9 - EKS 및 데이터/스토리지 이전
+### 산출물
 
-### 예정 작업
+- `terraform/environments/dev/main.tf`
+- `terraform/environments/dev/providers.tf`
+- `terraform/environments/dev/variables.tf`
+- `terraform/environments/dev/outputs.tf`
+- `terraform/environments/dev/terraform.tfvars.example`
+- `terraform/environments/dev/backend.tf.example`
+- `terraform/modules/vpc/*`
+- `terraform/modules/ecr/*`
+- `terraform/modules/s3/*`
+- `terraform/modules/iam/*`
+- `terraform/README.md`
+- `docs/02_ARCHITECTURE.md`
+- `docs/05_MIGRATION.md`
+- `docs/06_DEPLOYMENT.md`
+- `TASKS.md`
 
-- EKS 클러스터 배포
-- Aurora PostgreSQL 구성
-- ElastiCache 계획 반영
-- S3 업로드 구조로 전환
-- Secrets 및 IAM 정책 정리
+### 결정 사항
 
-## Day 10 - Kubernetes 배포 및 CI/CD
+- 개발 환경 기본 리전은 `ap-northeast-2`로 둔다.
+- 개발 VPC CIDR은 `10.20.0.0/16`으로 둔다.
+- Public subnet은 ALB와 NAT Gateway 용도로 둔다.
+- Private subnet은 ECS Fargate task 용도로 둔다.
+- Database subnet은 Aurora PostgreSQL과 ElastiCache Redis 용도로 둔다.
+- 개발 비용 절감을 위해 Terraform 초안은 NAT Gateway 1개로 시작한다.
+- S3는 public access block, SSE-S3 암호화, versioning, multipart upload 정리 정책을 기본으로 둔다.
+- ECR은 backend repository와 최근 이미지 20개 보관 lifecycle policy를 둔다.
+- 애플리케이션 IAM은 Day 8에서 S3 접근 policy만 정의하고, Day 9 ECS task role 연결로 확장한다.
+- Route53, ACM, ALB HTTPS, ECS, Aurora, ElastiCache, Lambda, CloudWatch는 Day 9 이후 모듈 확장 대상으로 둔다.
 
-### 예정 작업
+### 검증
 
-- Kubernetes 매니페스트 작성
+```bash
+terraform fmt -recursive terraform
+terraform -chdir=terraform/environments/dev init -backend=false
+terraform -chdir=terraform/environments/dev validate
+git diff --check
+```
+
+검증 결과:
+
+```text
+git diff --check 통과
+Terraform v1.15.7 설치 확인
+terraform fmt -recursive terraform 성공
+terraform init -backend=false 성공
+terraform validate 성공
+```
+
+## Day 9 - ECS 및 데이터/스토리지 이전
+
+### 완료 작업
+
+- Terraform `security-groups` 모듈 추가
+- Terraform `ecs` 모듈 추가
+- Terraform `aurora` 모듈 추가
+- Terraform `elasticache` 모듈 추가
+- dev 환경에서 ECS, Aurora, ElastiCache, SG, task role 연결
+- ECS task execution role과 애플리케이션 task role 정의
+- 기존 S3 접근 IAM policy를 ECS task role에 attach하도록 연결
+- Aurora PostgreSQL Serverless v2 cluster와 database subnet group 정의
+- ElastiCache Redis replication group과 subnet group 정의
+- Spring Boot `s3` profile과 `S3FileStorage` 구현 추가
+- Redis TLS 연결용 `REDIS_SSL_ENABLED` 설정 추가
+- Day 9 변경 사항을 아키텍처, 마이그레이션, 배포 문서에 반영
+
+### 결정 사항
+
+- ALB는 ECS 모듈에서 생성하고 public subnet에 배치한다.
+- ECS target group은 `/api/health`를 health check path로 사용한다.
+- 애플리케이션의 S3 접근은 access key가 아니라 ECS task role로 연결한다.
+- Aurora와 Redis는 database subnet에 두고 application SG에서 오는 트래픽만 허용한다.
+- AWS 배포 profile은 `postgres,redis,s3` 조합을 기준으로 한다.
+
+### 검증
+
+```bash
+terraform fmt -recursive terraform
+terraform -chdir=terraform/environments/dev init -backend=false
+terraform -chdir=terraform/environments/dev validate
+cd backend && ./gradlew test
+```
+
+검증 결과:
+
+```text
+terraform fmt -recursive terraform 성공
+terraform init -backend=false 성공
+terraform validate 성공
+./gradlew test 성공
+```
+
+### 추가 문서화
+
+- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`에 Day 8~Day 9 기준 Terraform 기반 AWS 인프라 설계를 1차 정리했다.
+
+## Day 10 - ECS 배포 및 CI/CD
+
+### 완료 작업
+
+- ECS task definition 배포 흐름 작성
 - GitHub Actions CI/CD 구축
 - ECR 빌드/푸시 연동
-- EKS 배포 자동화
+- ECS service 배포 자동화
+- GitHub Actions OIDC provider와 deploy role Terraform 코드 추가
+
+### 산출물
+
+- `.github/workflows/backend-ci-cd.yml`
+- `terraform/modules/github-actions/*`
+- `docs/06_DEPLOYMENT.md`
+- `docs/05_MIGRATION.md`
+- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- 실제 AWS 리소스 생성은 최대한 미루고, Day 10에서는 배포 자동화 정의와 문서를 먼저 준비한다.
+- Workflow는 Terraform apply를 실행하지 않는다.
+- 리소스 생성을 미루는 동안 `main` push는 backend test만 수행하고, ECR push와 ECS 배포는 수동 실행으로 제한한다.
+- ECR repository와 ECS service는 Terraform으로 생성된 이후 존재한다고 가정한다.
+- Docker image tag는 `github.sha`를 사용한다.
+- ECS 배포는 현재 service의 task definition을 조회하고 backend container image만 교체하는 rolling deployment 방식으로 둔다.
+- GitHub Actions의 AWS 인증은 `AWS_DEPLOY_ROLE_ARN` secret과 OIDC assume role을 기준으로 한다.
+- Deploy role은 ECR push, ECS service update, task definition register, ECS task role pass 권한만 갖도록 제한한다.
+
+### 검증
+
+```bash
+git diff --check
+```
 
 ## Day 11 - Lambda, 모니터링, 스케일링
 

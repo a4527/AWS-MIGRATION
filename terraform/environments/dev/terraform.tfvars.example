@@ -1,0 +1,27 @@
+aws_region  = "ap-northeast-2"
+project_name = "fileshare"
+environment  = "dev"
+
+vpc_cidr           = "10.20.0.0/16"
+availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
+public_subnets     = ["10.20.0.0/24", "10.20.1.0/24"]
+private_subnets    = ["10.20.10.0/24", "10.20.11.0/24"]
+database_subnets   = ["10.20.20.0/24", "10.20.21.0/24"]
+
+file_bucket_name      = "replace-with-globally-unique-fileshare-dev-bucket"
+force_destroy_buckets = false
+
+aurora_master_password = "replace-with-strong-development-password"
+app_jwt_secret         = "replace-with-strong-development-jwt-secret"
+
+github_repository = "replace-with-github-owner/aws-migration-project"
+github_branch     = "main"
+
+ecs_backend_image_tag = "latest"
+ecs_task_cpu          = 512
+ecs_task_memory       = 1024
+ecs_desired_count     = 2
+
+tags = {
+  Owner = "portfolio"
+}

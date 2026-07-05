@@ -113,7 +113,7 @@ curl -i http://localhost:8080/actuator/health
 
 ## AWS 전환 이후 확장 예정 이슈
 
-- EKS 배포 실패
+- ECS 서비스 배포 실패
 - ALB 헬스체크 실패
 - HTTPS 인증서 적용 문제
 - S3 권한 오류

@@ -10,7 +10,7 @@
 - Spring Security와 JWT 기반 인증
 - MinIO에서 S3로의 저장소 전환
 - PostgreSQL에서 Aurora로의 마이그레이션
-- EKS, Terraform, GitHub Actions 기반 운영 자동화
+- ECS Fargate, Terraform, GitHub Actions 기반 운영 자동화
 
 ## 결과물
 
@@ -19,4 +19,4 @@
 - API 문서
 - 마이그레이션 기록
 - 운영/배포 문서
-
+- Terraform 기반 AWS 인프라 설계 정리
