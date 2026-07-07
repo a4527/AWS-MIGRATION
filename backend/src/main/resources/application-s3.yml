@@ -4,3 +4,4 @@ app:
     s3:
       region: ${AWS_REGION:ap-northeast-2}
       bucket: ${S3_BUCKET:fileshare-dev-uploaded-files}
+      object-prefix: ${S3_OBJECT_PREFIX:files/}

@@ -21,21 +21,24 @@ public class S3FileStorage implements FileStorage {
 
     private final S3Client s3Client;
     private final String bucket;
+    private final String objectPrefix;
 
     public S3FileStorage(
             @Value("${app.storage.s3.region}") String region,
-            @Value("${app.storage.s3.bucket}") String bucket
+            @Value("${app.storage.s3.bucket}") String bucket,
+            @Value("${app.storage.s3.object-prefix:files/}") String objectPrefix
     ) {
         this.s3Client = S3Client.builder()
                 .region(Region.of(region))
                 .build();
         this.bucket = bucket;
+        this.objectPrefix = normalizePrefix(objectPrefix);
     }
 
     @Override
     public StoredFile store(String originalFileName, InputStream inputStream) throws IOException {
         try {
-            String objectName = UUID.randomUUID() + extensionOf(originalFileName);
+            String objectName = objectPrefix + UUID.randomUUID() + extensionOf(originalFileName);
             PutObjectRequest request = PutObjectRequest.builder()
                     .bucket(bucket)
                     .key(objectName)
@@ -70,5 +73,12 @@ public class S3FileStorage implements FileStorage {
             return "";
         }
         return fileName.substring(dotIndex);
+    }
+
+    private String normalizePrefix(String prefix) {
+        if (prefix == null || prefix.isBlank()) {
+            return "";
+        }
+        return prefix.endsWith("/") ? prefix : prefix + "/";
     }
 }
