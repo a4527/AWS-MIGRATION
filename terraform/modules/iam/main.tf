@@ -6,13 +6,19 @@ data "aws_iam_policy_document" "application_files" {
       "s3:PutObject",
       "s3:DeleteObject"
     ]
-    resources = ["${var.file_bucket_arn}/*"]
+    resources = ["${var.file_bucket_arn}/${var.file_object_prefix}*"]
   }
 
   statement {
     sid       = "AllowFileBucketList"
     actions   = ["s3:ListBucket"]
     resources = [var.file_bucket_arn]
+
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.file_object_prefix}*"]
+    }
   }
 }
 

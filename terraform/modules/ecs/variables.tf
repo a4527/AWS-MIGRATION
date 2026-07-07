@@ -54,9 +54,47 @@ variable "desired_count" {
   type        = number
 }
 
+variable "min_capacity" {
+  description = "Minimum ECS service task count for auto scaling."
+  type        = number
+}
+
+variable "max_capacity" {
+  description = "Maximum ECS service task count for auto scaling."
+  type        = number
+}
+
+variable "cpu_target_value" {
+  description = "Target average CPU utilization percentage for ECS service auto scaling."
+  type        = number
+}
+
+variable "memory_target_value" {
+  description = "Target average memory utilization percentage for ECS service auto scaling."
+  type        = number
+}
+
+variable "log_retention_in_days" {
+  description = "CloudWatch log retention in days."
+  type        = number
+  default     = 14
+}
+
 variable "health_check_path" {
   description = "ALB target group health check path."
   type        = string
+}
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for the HTTPS listener. If null, only HTTP is enabled."
+  type        = string
+  default     = null
+}
+
+variable "ssl_policy" {
+  description = "ALB HTTPS listener SSL policy."
+  type        = string
+  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 }
 
 variable "aws_region" {
@@ -67,6 +105,12 @@ variable "aws_region" {
 variable "s3_bucket_name" {
   description = "S3 bucket name used by the application."
   type        = string
+}
+
+variable "s3_object_prefix" {
+  description = "S3 object key prefix used by the application."
+  type        = string
+  default     = "files/"
 }
 
 variable "database_url" {

@@ -14,7 +14,7 @@
 - Redis 연결값은 `REDIS_HOST`, `REDIS_PORT` 환경변수로 주입한다.
 - AWS ElastiCache Redis TLS 연결은 `REDIS_SSL_ENABLED=true`로 활성화한다.
 - MinIO 연결값은 `MINIO_ENDPOINT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `MINIO_BUCKET` 환경변수로 주입한다.
-- S3 연결값은 `AWS_REGION`, `S3_BUCKET` 환경변수로 주입하고 `s3` profile에서 사용한다.
+- S3 연결값은 `AWS_REGION`, `S3_BUCKET`, `S3_OBJECT_PREFIX` 환경변수로 주입하고 `s3` profile에서 사용한다.
 - Day 6 이후 PostgreSQL, Redis, MinIO, Nginx는 Docker Compose로 통합한다.
 - Docker Compose 실행 시 외부 API 진입점은 Nginx이며 기본 포트는 `http://localhost:8080`이다.
 - MinIO 콘솔은 기본 포트 `http://localhost:9001`로 노출한다.
@@ -101,6 +101,7 @@ REDIS_PORT=6379
 REDIS_SSL_ENABLED=true
 AWS_REGION=ap-northeast-2
 S3_BUCKET=<terraform-output-file-bucket-name>
+S3_OBJECT_PREFIX=files/
 ```
 
 ## CI/CD
@@ -171,7 +172,9 @@ Workflow는 Terraform apply를 실행하지 않는다. 따라서 VPC, ECR, ECS, 
 
 ECS rolling deployment는 새 task definition revision을 만들고 service가 새 task를 띄운 뒤, ALB target group health check를 통과한 task로 트래픽을 전환한다.
 
-Lambda 배포 자동화는 Day 11 이후 서버리스 후처리 구현과 함께 별도 workflow 또는 job으로 분리한다.
+Day 11 기준 Lambda 리소스와 S3 이벤트 연결은 Terraform에서 생성한다. Lambda 코드 패키징도 Terraform `archive` provider가 수행한다. 별도 Lambda CI/CD workflow는 아직 만들지 않았으며, 운영 전환 시 애플리케이션 배포와 독립적인 서버리스 배포 job으로 분리한다.
+
+Day 12 기준 HTTPS는 선택형으로 구성한다. `terraform.tfvars`에 `domain_name`과 `route53_hosted_zone_name`을 모두 넣으면 Terraform이 ACM 인증서, DNS validation record, ALB HTTPS listener, HTTP to HTTPS redirect, Route53 ALB alias record를 구성한다. 두 값이 비어 있으면 기존 HTTP ALB endpoint를 사용한다.
 
 ## 서버리스 배포 기준
 
@@ -179,3 +182,16 @@ Lambda 배포 자동화는 Day 11 이후 서버리스 후처리 구현과 함께
 - Lambda 실행 권한은 최소 권한 원칙으로 분리한다.
 - 서버리스 로그는 CloudWatch에서 확인 가능해야 한다.
 - 서버리스 배포는 애플리케이션 배포와 독립적으로 롤백 가능해야 한다.
+- 현재 file processor Lambda는 object metadata를 읽고 S3 object tag에 후처리 결과를 기록한다.
+- 실제 백신 엔진과 DB 상태 동기화는 후속 운영 보강 범위로 둔다.
+- 애플리케이션과 Lambda의 S3 IAM 권한은 업로드 object prefix 범위로 제한한다.
+
+기본 후처리 tag:
+
+```text
+scan-status
+processing-status
+metadata-size
+metadata-content-type
+processor
+```

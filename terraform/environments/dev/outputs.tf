@@ -68,6 +68,16 @@ output "application_alb_dns_name" {
   value       = module.ecs.alb_dns_name
 }
 
+output "application_url" {
+  description = "Application URL. Uses the custom HTTPS domain when configured, otherwise the ALB HTTP endpoint."
+  value       = var.domain_name != "" ? "https://${var.domain_name}" : "http://${module.ecs.alb_dns_name}"
+}
+
+output "application_domain_name" {
+  description = "Custom application domain name when Route53 and HTTPS are enabled."
+  value       = var.domain_name
+}
+
 output "aurora_cluster_endpoint" {
   description = "Aurora PostgreSQL writer endpoint."
   value       = module.aurora.cluster_endpoint
@@ -76,4 +86,14 @@ output "aurora_cluster_endpoint" {
 output "redis_primary_endpoint" {
   description = "ElastiCache Redis primary endpoint."
   value       = module.elasticache.primary_endpoint_address
+}
+
+output "file_processor_function_name" {
+  description = "S3 event file processor Lambda function name."
+  value       = module.file_processor.function_name
+}
+
+output "file_processor_log_group_name" {
+  description = "CloudWatch log group for the file processor Lambda."
+  value       = module.file_processor.log_group_name
 }

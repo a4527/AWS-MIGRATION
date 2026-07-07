@@ -109,6 +109,7 @@
 - Aurora PostgreSQL과 ElastiCache Redis는 database subnet에 둔다.
 - S3는 MinIO의 `files` bucket 역할을 대체하며, object key는 기존 `storagePath` 계약과 호환되게 유지한다.
 - ECR은 Docker Compose에서 빌드하던 Spring Boot 이미지를 ECS 배포용 이미지로 보관한다.
+- dev ECR repository는 실습 후 `terraform destroy`가 image 잔존으로 막히지 않도록 `force_delete = true`를 사용한다. 운영 전환 시에는 repository 삭제 정책과 image 보존 요구사항을 별도로 검토한다.
 - 애플리케이션의 S3 접근 권한은 IAM policy로 분리하고, ECS task role에 연결한다.
 - Route53과 ACM은 Day 12 HTTPS 전환에서 적용하되, Day 8 설계 범위에는 ALB HTTPS 진입점의 선행 리소스로 포함한다.
 - Terraform 변수는 `aws_region`, `project_name`, `environment`, VPC/subnet CIDR, S3 bucket 이름을 환경별로 분리한다.
@@ -135,3 +136,56 @@
 - ECS task definition은 현재 service의 task definition을 조회한 뒤 backend container image만 교체해 새 revision으로 배포한다.
 - ALB target group health check를 통과한 task만 트래픽을 받는다.
 - AWS 인증은 장기 access key 대신 GitHub OIDC로 assume하는 deploy role을 기준으로 한다.
+
+## Day 11 Lambda, 모니터링, 스케일링 기준
+
+- S3 object 생성 이벤트는 `file-processor` Lambda를 호출한다.
+- Lambda는 업로드 object의 크기와 content type을 조회하고, 처리 결과를 S3 object tag로 기록한다.
+- 기본 후처리 tag는 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`이다.
+- 현재 Lambda의 바이러스 검사 구현은 차단 확장자 기반의 기본 가드이며, 실제 운영 전환 시 ClamAV layer 또는 별도 검사 서비스 연동으로 교체한다.
+- Lambda 후처리 결과를 애플리케이션 DB의 `files.status`, `files.scan_status`와 동기화하는 단계는 후속 작업으로 분리한다.
+- Lambda 실행 role은 업로드 bucket의 object read/tagging 권한과 자체 CloudWatch Logs 쓰기 권한만 가진다.
+- ECS service는 Service Auto Scaling target tracking으로 CPU와 memory 사용률 기준 확장을 수행한다.
+- ECS Container Insights, CloudWatch Logs, Lambda error/duration alarm, ECS CPU/memory alarm, ALB target 5xx alarm을 관측성 기준으로 둔다.
+- 롤링 배포의 정상 여부는 ECS service event, ALB target health, `/api/health`, CloudWatch application log를 함께 확인한다.
+
+## Day 12 HTTPS 및 보안 강화 기준
+
+- `domain_name`과 `route53_hosted_zone_name`이 설정된 환경에서는 Route53, ACM, ALB HTTPS listener를 Terraform으로 연결한다.
+- ACM 인증서는 DNS validation을 사용하고, 검증 레코드는 같은 public hosted zone에 생성한다.
+- HTTPS가 켜진 경우 ALB 443 listener가 ECS target group으로 요청을 전달하고, 80 listener는 443으로 redirect한다.
+- 도메인 변수가 비어 있으면 개발 실습을 위해 기존 HTTP ALB 진입점을 유지한다.
+- 애플리케이션 S3 object key는 `S3_OBJECT_PREFIX` 기본값인 `files/` 아래에 생성한다.
+- ECS task role의 S3 object 권한은 bucket 전체가 아니라 `files/` prefix로 제한한다.
+- file processor Lambda의 S3 read/tagging 권한도 S3 notification prefix와 같은 prefix로 제한한다.
+- 공개 subnet에는 ALB, NAT Gateway, Internet Gateway를 둔다.
+- private subnet에는 ECS Fargate task를 둔다.
+- database subnet에는 Aurora PostgreSQL과 ElastiCache Redis를 둔다.
+- 운영 전환 시 S3/ECR/CloudWatch 접근은 VPC endpoint와 egress 제한을 함께 검토한다.
+
+## Day 13 최종 검증 및 성능 점검 기준
+
+- 최종 검증은 온프레미스 Docker Compose와 AWS ECS 환경의 API 계약을 비교하는 방식으로 수행한다.
+- 사용자 관점의 핵심 시나리오는 health, signup, login, current user, upload, list, metadata lookup, download, delete이다.
+- 온프레미스 MinIO object key와 AWS S3 object key는 모두 `files.storage_path` 계약으로 비교한다.
+- AWS S3 object key는 `files/` prefix 아래 생성되어야 하며, prefix 제한 IAM 정책과 Lambda notification prefix가 같은 기준을 사용해야 한다.
+- PostgreSQL과 Aurora PostgreSQL은 같은 `users`, `files` 테이블 계약을 유지한다.
+- Redis와 ElastiCache는 `files:metadata:{fileId}` 캐시 키 형식을 유지한다.
+- 장애 복구 검증은 온프레미스의 컨테이너 중지/재시작과 AWS의 실제 실패 주입으로 나누어 수행한다. AWS에서는 ECS task `stop-task` 후 service scheduler 복구, Lambda malformed event 실패 후 정상 업로드 재처리, CloudWatch Logs/Alarms 확인까지 포함한다.
+- 성능 점검은 개발 환경 비용을 고려해 smoke 수준의 반복 health/API 호출로 시작하고, 본격 부하 테스트는 별도 예산과 알람 action을 준비한 뒤 수행한다.
+- 최종 비교는 단순 기능 동일성뿐 아니라 파일 관리, 비용 조정, 보안 경계, 장애 복구, 로그/관측성, 확장성 측면에서 AWS 전환 효과를 설명할 수 있어야 한다.
+- 파일 관리는 S3 object key, S3 object tag, Lambda 실행 로그를 함께 확인해 저장과 후처리 책임이 backend에서 분리되었는지 검증한다.
+- 비용 관리는 ECS desired count와 Auto Scaling 범위, Lambda event 기반 실행, CloudWatch log retention, destroy 후 잔여 리소스 여부를 확인한다.
+- 보안 검증은 public/private/database subnet 분리, security group 접근 경로, ECS/Lambda IAM role의 prefix 기반 S3 권한, ACM HTTPS 적용 여부를 기준으로 한다.
+- 관측성 검증은 backend log, Lambda log, ALB 5xx, ECS CPU/memory, Lambda error/duration alarm을 CloudWatch에서 확인하는 방식으로 수행한다.
+
+## Day 14 포트폴리오 및 마감 기준
+
+- 최종 산출물은 기능 구현 목록이 아니라 온프레미스에서 AWS로 책임이 어떻게 이동했는지를 중심으로 정리한다.
+- API 계약, DB schema, object key, cache key처럼 마이그레이션 중 유지한 계약을 포트폴리오의 핵심 근거로 사용한다.
+- MinIO에서 S3로의 전환은 `files.storage_path`와 object key 계약 유지, S3 event 기반 Lambda 후처리 분리, prefix 기반 IAM 제한을 함께 설명한다.
+- PostgreSQL에서 Aurora로의 전환은 테이블 계약 유지와 database subnet 격리를 함께 설명한다.
+- Redis에서 ElastiCache로의 전환은 `files:metadata:{fileId}` 캐시 키 유지와 managed cache 운영 전환을 함께 설명한다.
+- Docker Compose/Nginx에서 ECS/ALB로의 전환은 health check, target group, rolling deployment, scheduler self-healing 기준으로 설명한다.
+- CloudWatch 지표는 CPU/memory 단일 수치가 아니라 ALB 5xx, target health, Lambda error, ECS task 재시작 여부와 함께 장애 판단 기준으로 정리한다.
+- Day 14 마감 후 남은 작업은 운영 보강 항목으로 분리하고, 현재 프로젝트는 2주 마이그레이션 포트폴리오 산출물 완성을 완료 기준으로 둔다.

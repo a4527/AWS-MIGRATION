@@ -73,6 +73,15 @@ ecs_desired_count = 1
 
 실습 비용을 줄이려면 `ecs_desired_count = 1`로 둔다.
 
+HTTPS와 도메인 연결을 함께 검증하려면 Route53 public hosted zone을 먼저 준비하고 다음 값을 추가한다.
+
+```hcl
+domain_name              = "api.example.com"
+route53_hosted_zone_name = "example.com"
+```
+
+두 값을 비워두면 Terraform은 ACM/Route53 HTTPS 구성을 건너뛰고 ALB HTTP endpoint를 사용한다.
+
 ## 3. Terraform 검증
 
 ```bash
@@ -90,6 +99,7 @@ terraform plan
 VPC / subnet / route table
 NAT Gateway
 ALB / target group
+ACM certificate / Route53 records, when domain variables are set
 ECR repository
 ECS cluster / service / task definition
 Aurora PostgreSQL
@@ -97,6 +107,10 @@ ElastiCache Redis
 S3 bucket
 IAM roles / policies
 GitHub Actions OIDC provider / deploy role
+Lambda file processor
+S3 bucket notification
+CloudWatch log groups / alarms
+ECS Service Auto Scaling
 ```
 
 ## 4. Terraform apply
@@ -120,7 +134,10 @@ terraform output backend_ecr_repository_url
 terraform output ecs_cluster_name
 terraform output ecs_service_name
 terraform output application_alb_dns_name
+terraform output application_url
 terraform output github_actions_deploy_role_arn
+terraform output file_processor_function_name
+terraform output file_processor_log_group_name
 ```
 
 이 시점에는 인프라는 생성되었지만 ECR image가 없으면 ECS task가 정상 실행되지 않을 수 있다.
@@ -213,6 +230,19 @@ EC2
 CloudWatch
 -> Log groups
 -> /ecs/fileshare-dev-backend
+-> /aws/lambda/fileshare-dev-file-processor
+
+Lambda
+-> Functions
+-> fileshare-dev-file-processor
+
+CloudWatch
+-> Alarms
+-> fileshare-dev-file-processor-errors
+-> fileshare-dev-file-processor-duration
+-> fileshare-dev-backend-cpu-high
+-> fileshare-dev-backend-memory-high
+-> fileshare-dev-alb-target-5xx
 ```
 
 정상 기준:
@@ -222,21 +252,25 @@ ECR image 존재
 ECS service running task 존재
 Target group target healthy
 CloudWatch log stream 생성
+Lambda function 생성
+S3 bucket notification 연결
 ```
 
-## 8. ALB DNS 확인
+## 8. 애플리케이션 URL 확인
 
-Terraform output으로 ALB DNS를 확인한다.
+Terraform output으로 애플리케이션 URL을 확인한다.
 
 ```bash
 ALB_DNS=$(terraform output -raw application_alb_dns_name)
+BASE_URL=$(terraform output -raw application_url)
 echo "$ALB_DNS"
+echo "$BASE_URL"
 ```
 
 Health API를 호출한다.
 
 ```bash
-curl "http://$ALB_DNS/api/health"
+curl "$BASE_URL/api/health"
 ```
 
 정상 응답 예:
@@ -261,7 +295,7 @@ printf "hello aws deployment\n" > sample.txt
 회원가입:
 
 ```bash
-curl -X POST "http://$ALB_DNS/api/auth/signup" \
+curl -X POST "$BASE_URL/api/auth/signup" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "aws-user@example.com",
@@ -273,7 +307,7 @@ curl -X POST "http://$ALB_DNS/api/auth/signup" \
 로그인:
 
 ```bash
-curl -s -X POST "http://$ALB_DNS/api/auth/login" \
+curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -d '{
     "email": "aws-user@example.com",
@@ -290,14 +324,14 @@ TOKEN="replace-with-access-token"
 내 정보 조회:
 
 ```bash
-curl "http://$ALB_DNS/api/users/me" \
+curl "$BASE_URL/api/users/me" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
 파일 업로드:
 
 ```bash
-curl -X POST "http://$ALB_DNS/api/files" \
+curl -X POST "$BASE_URL/api/files" \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@sample.txt"
 ```
@@ -305,7 +339,7 @@ curl -X POST "http://$ALB_DNS/api/files" \
 파일 목록 조회:
 
 ```bash
-curl "http://$ALB_DNS/api/files" \
+curl "$BASE_URL/api/files" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -318,15 +352,17 @@ FILE_ID="replace-with-file-id"
 파일 다운로드:
 
 ```bash
-curl -L "http://$ALB_DNS/api/files/$FILE_ID/download" \
+curl -L "$BASE_URL/api/files/$FILE_ID/download" \
   -H "Authorization: Bearer $TOKEN" \
   -o downloaded-sample.txt
 ```
 
+`application_url` output은 도메인/HTTPS 설정이 없으면 ALB HTTP URL이고, 설정되어 있으면 HTTPS URL이다.
+
 파일 삭제:
 
 ```bash
-curl -X DELETE "http://$ALB_DNS/api/files/$FILE_ID" \
+curl -X DELETE "$BASE_URL/api/files/$FILE_ID" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -348,9 +384,33 @@ ElastiCache
 
 CloudWatch Logs
 -> backend application logs
+-> file processor Lambda logs
+
+S3
+-> object properties
+-> Tags
+-> scan-status / processing-status / metadata-size 확인
 ```
 
 DB에 직접 접속하려면 private subnet 접근 경로가 필요하다. 현재 database subnet은 public 접근을 허용하지 않으므로, 로컬에서 바로 접속하는 구조가 아니다.
+
+Day 11 기준 file processor Lambda는 S3 object tag에 후처리 결과를 기록한다. DB의 `files.status`, `files.scan_status`를 직접 갱신하지 않으므로 API 응답의 scan status와 S3 tag는 아직 별도 확인 대상이다.
+
+## 10-1. 온프레미스/AWS 최종 비교
+
+Day 13 최종 비교 검증은 `docs/14_FINAL_VALIDATION.md`를 기준으로 수행한다.
+
+핵심 비교 대상:
+
+```text
+API 응답 계약
+업로드/다운로드 파일 무결성
+files.storage_path와 object key 일치 여부
+Redis/ElastiCache 캐시 키 형식
+ALB target health와 /api/health 응답
+CloudWatch backend/Lambda 로그
+CloudWatch alarm 상태
+```
 
 ## 11. 문제 발생 시 확인 순서
 
@@ -383,6 +443,34 @@ S3 AccessDenied:
 ECS task role
 application_files_policy
 S3 bucket name 환경변수
+S3 object prefix 환경변수
+실제 object key가 files/ prefix 아래에 있는지 확인
+```
+
+HTTPS/도메인 연결 실패:
+
+```text
+Route53 public hosted zone 이름 확인
+ACM certificate validation status 확인
+Route53 validation CNAME record 생성 여부 확인
+ALB 443 listener와 certificate ARN 연결 확인
+HTTP 요청이 HTTPS로 301 redirect 되는지 확인
+```
+
+Lambda 후처리 실패:
+
+```text
+Lambda
+-> Monitor
+-> CloudWatch Logs
+-> /aws/lambda/fileshare-dev-file-processor
+
+CloudWatch
+-> Alarms
+-> fileshare-dev-file-processor-errors
+
+S3 bucket notification prefix가 실제 object key와 일치하는지 확인
+Lambda execution role의 s3:GetObject, s3:PutObjectTagging 권한 확인
 ```
 
 DB 연결 실패:
@@ -424,7 +512,7 @@ Aurora final snapshot 설정
 force_destroy_buckets = true
 ```
 
-ECR image가 남아 repository 삭제가 막히면 콘솔 또는 CLI로 image를 먼저 삭제한다.
+dev ECR repository는 Terraform에서 `force_delete = true`로 설정되어 있어 repository 삭제 시 남아 있는 image도 함께 삭제된다. 운영 환경에서는 image 보존 정책을 먼저 정하고 `force_delete` 사용 여부를 별도로 검토한다.
 
 ## 13. 비용 주의
 
@@ -439,6 +527,8 @@ ECS Fargate
 Aurora Serverless v2
 ElastiCache Redis
 CloudWatch Logs
+CloudWatch Alarms
+Lambda invocation
 S3
 ECR
 ```

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="640" viewBox="0 0 1180 640" role="img" aria-labelledby="title desc">
+  <title id="title">Operations Validation Map</title>
+  <desc id="desc">Operational validation map for API contract, storage, ECS recovery, Lambda processing, CloudWatch alarms, and security boundaries.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .card { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 8; }
+    .ok { fill: #ecfdf5; stroke: #059669; stroke-width: 2; rx: 8; }
+    .warn { fill: #fff7ed; stroke: #ea580c; stroke-width: 2; rx: 8; }
+    .obs { fill: #eff6ff; stroke: #2563eb; stroke-width: 2; rx: 8; }
+    .edge { stroke: #64748b; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
+    .title { font: 700 28px Arial, sans-serif; fill: #0f172a; }
+    .label { font: 700 17px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #475569; }
+    .metric { font: 700 13px Arial, sans-serif; fill: #1d4ed8; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1180" height="640"/>
+  <text class="title" x="48" y="58">Final Operations Validation Map</text>
+  <text class="small" x="48" y="84">Use this map to explain what was validated and how AWS improves operations compared with the local stack.</text>
+
+  <rect class="card" x="70" y="145" width="220" height="120"/>
+  <text class="label" x="116" y="180">API Contract</text>
+  <text class="small" x="96" y="208">health, signup, login</text>
+  <text class="small" x="96" y="230">upload, download, delete</text>
+
+  <rect class="ok" x="365" y="145" width="220" height="120"/>
+  <text class="label" x="412" y="180">Storage Match</text>
+  <text class="small" x="394" y="208">files.storage_path</text>
+  <text class="small" x="394" y="230">equals S3 object key</text>
+
+  <rect class="ok" x="660" y="145" width="220" height="120"/>
+  <text class="label" x="712" y="180">ECS Recovery</text>
+  <text class="small" x="690" y="208">stop task test</text>
+  <text class="small" x="690" y="230">desired = running</text>
+
+  <rect class="obs" x="365" y="345" width="220" height="120"/>
+  <text class="label" x="410" y="380">CloudWatch</text>
+  <text class="small" x="394" y="408">backend logs</text>
+  <text class="small" x="394" y="430">Lambda logs, alarms</text>
+
+  <rect class="warn" x="660" y="345" width="220" height="120"/>
+  <text class="label" x="702" y="380">Alarm Criteria</text>
+  <text class="small" x="690" y="408">CPU/memory sustained</text>
+  <text class="small" x="690" y="430">ALB 5xx, Lambda errors</text>
+
+  <rect class="card" x="955" y="245" width="170" height="120"/>
+  <text class="label" x="996" y="280">Security</text>
+  <text class="small" x="982" y="308">public ALB</text>
+  <text class="small" x="982" y="330">private ECS</text>
+  <text class="small" x="982" y="352">database subnet</text>
+
+  <path class="edge" d="M290 205 H365"/>
+  <path class="edge" d="M585 205 H660"/>
+  <path class="edge" d="M770 265 V345"/>
+  <path class="edge" d="M660 405 H585"/>
+  <path class="edge" d="M880 405 C920 386 940 344 955 322"/>
+  <path class="edge" d="M880 205 C930 218 945 246 955 280"/>
+
+  <rect x="70" y="520" width="1055" height="36" fill="#e0f2fe" rx="6"/>
+  <text class="metric" x="94" y="542">Portfolio message:</text>
+  <text class="small" x="214" y="542">The migration keeps user-facing behavior stable while moving recovery, scaling, storage events, and observability to managed AWS services.</text>
+</svg>

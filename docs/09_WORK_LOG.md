@@ -539,7 +539,7 @@ git diff --check
 
 ## Day 11 - Lambda, 모니터링, 스케일링
 
-### 예정 작업
+### 목표
 
 - S3 이벤트 기반 Lambda 구성
 - 바이러스 검사 및 메타데이터 추출 후처리 구현
@@ -547,9 +547,52 @@ git diff --check
 - Auto Scaling 정책 구성
 - 헬스체크 및 롤링 배포 확인
 
+### 진행 내용
+
+- `terraform/functions/file-processor/handler.py` Lambda 핸들러 추가
+- `terraform/modules/file-processor` 모듈 추가
+- S3 `ObjectCreated` 이벤트를 file processor Lambda로 연결
+- Lambda 실행 role, 최소 S3 object read/tagging 권한, CloudWatch Logs 권한 구성
+- Lambda error/duration CloudWatch alarm 구성
+- ECS service Auto Scaling target 추가
+- ECS CPU/memory target tracking policy 추가
+- ECS CPU/memory alarm과 ALB target 5xx alarm 추가
+- ECS/Lambda 로그 보존 기간을 `cloudwatch_log_retention_in_days` 변수로 통일
+- Terraform dev output에 file processor function/log group 추가
+- 마이그레이션, 배포, Terraform summary, AWS runbook 문서 갱신
+
+### 산출물
+
+- `terraform/functions/file-processor/handler.py`
+- `terraform/modules/file-processor/*`
+- `terraform/modules/ecs/main.tf`
+- `terraform/environments/dev/main.tf`
+- `docs/05_MIGRATION.md`
+- `docs/06_DEPLOYMENT.md`
+- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`
+- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- Day 11 Lambda는 실제 백신 엔진 대신 차단 확장자 기반 기본 가드와 metadata 추출을 구현한다.
+- Lambda 처리 결과는 S3 object tag에 기록한다.
+- DB의 `files.status`, `files.scan_status` 갱신은 후속 연동으로 분리한다.
+- Lambda 배포는 별도 GitHub Actions job이 아니라 Terraform `archive` provider 기반 패키징으로 시작한다.
+- CloudWatch alarm은 감지 리소스만 생성하고 SNS 같은 알림 action은 후속 운영 보강으로 둔다.
+- 개발 기본 Auto Scaling 범위는 `min=2`, `max=4`로 둔다. 비용 절감을 위해 실습 시 `min=1`, `desired=1`로 낮출 수 있다.
+
+### 검증
+
+```bash
+terraform fmt -recursive terraform
+python3 -m py_compile terraform/functions/file-processor/handler.py
+terraform -chdir=terraform/environments/dev validate
+```
+
 ## Day 12 - HTTPS 및 보안 강화
 
-### 예정 작업
+### 목표
 
 - Route53 도메인 연결
 - ACM 인증서 적용
@@ -557,21 +600,132 @@ git diff --check
 - IAM 최소 권한 원칙 점검
 - 공개/비공개 리소스 분리 확인
 
+### 진행 내용
+
+- dev Terraform 환경에 선택형 Route53/ACM HTTPS 구성을 추가했다.
+- `domain_name`과 `route53_hosted_zone_name`이 모두 설정되면 ACM 인증서를 DNS 검증 방식으로 발급한다.
+- ALB는 인증서가 있을 때 443 HTTPS listener를 만들고, 80 HTTP listener는 HTTPS로 301 redirect한다.
+- 도메인 설정이 없으면 기존처럼 HTTP listener가 target group으로 forward하므로 로컬/실습 Terraform 검증이 가능하다.
+- Route53 alias A record를 ALB로 연결해 사용자 요청 진입점을 custom domain으로 전환할 수 있게 했다.
+- ECS task role의 S3 object 권한을 전체 bucket에서 `files/` prefix 기준으로 좁혔다.
+- file processor Lambda의 S3 object read/tagging 권한도 notification prefix와 같은 prefix로 좁혔다.
+- Spring Boot S3 저장소가 `S3_OBJECT_PREFIX`를 사용해 `files/` 아래로 object key를 생성하도록 맞췄다.
+- 공개 리소스는 ALB/NAT/IGW, private 리소스는 ECS task, database subnet 리소스는 Aurora/Redis로 문서화했다.
+
+### 산출물
+
+- `terraform/environments/dev/main.tf`
+- `terraform/environments/dev/variables.tf`
+- `terraform/environments/dev/outputs.tf`
+- `terraform/modules/ecs/*`
+- `terraform/modules/iam/*`
+- `terraform/modules/file-processor/main.tf`
+- `backend/src/main/java/com/example/fileshare/infra/storage/S3FileStorage.java`
+- `backend/src/main/resources/application-s3.yml`
+- `docs/05_MIGRATION.md`
+- `docs/06_DEPLOYMENT.md`
+- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`
+- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- 도메인이 없는 개발 환경을 위해 HTTPS는 조건부로 구성한다.
+- ACM 인증서는 ALB와 같은 region의 provider에서 생성한다. 현재 dev region은 `ap-northeast-2`이다.
+- 인증서 검증은 Route53 DNS validation으로 자동화한다.
+- 애플리케이션 object key prefix와 Lambda notification prefix는 같은 `file_processor_object_prefix` 값을 공유한다.
+- 운영 수준의 추가 egress 제한은 S3/ECR/CloudWatch VPC endpoint 설계와 함께 후속 보강으로 둔다.
+
+### 검증
+
+```bash
+terraform fmt -recursive terraform
+./gradlew test
+terraform -chdir=terraform/environments/dev validate
+```
+
 ## Day 13 - 최종 검증 및 성능 점검
 
-### 예정 작업
+### 목표
 
 - 온프레미스 vs AWS 동작 비교
 - 업로드/다운로드 시나리오 테스트
 - 장애 복구 시나리오 테스트
 - 로그 및 알람 확인
 
+### 진행 내용
+
+- 온프레미스 Docker Compose와 AWS ECS 환경의 최종 비교 기준을 정리했다.
+- 공통 API 계약 검증 순서를 health, signup, login, current user, file workflow 기준으로 정의했다.
+- 업로드/다운로드 검증에서 원본 파일과 다운로드 파일을 `diff`로 비교하도록 절차를 구체화했다.
+- MinIO/S3 object key와 `files.storage_path` 비교 기준을 정리했다.
+- Redis/ElastiCache 캐시 키 형식 비교 기준을 정리했다.
+- AWS 장애 복구 검증 대상을 ECS rolling deployment, ALB target health, S3 권한, Lambda 후처리로 나누어 정리했다.
+- CloudWatch Logs와 CloudWatch Alarm 확인 대상을 Day 11~12 Terraform 구성 기준으로 정리했다.
+- 개발 환경에서 수행 가능한 smoke 성능 점검 절차를 추가했다.
+- `docs/14_FINAL_VALIDATION.md`의 중복된 AWS 전환 가치 설명을 검증 매트릭스로 줄였다.
+- AWS 장애 복구 검증에 ECS task `stop-task` 실패 주입, Lambda malformed event 실패 주입, 로그 확인, 정상 복구 확인 절차를 추가했다.
+- 마이그레이션 문서의 Day 13 장애 복구 기준을 실제 실패 주입과 복구 검증 기준에 맞게 갱신했다.
+- Day 13 완료 상태를 `TASKS.md`에 반영했다.
+- 마이그레이션 문서에 Day 13 최종 검증 기준을 추가했다.
+
+### 산출물
+
+- `docs/14_FINAL_VALIDATION.md`
+- `docs/05_MIGRATION.md`
+- `docs/09_WORK_LOG.md`
+- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- 실제 AWS 리소스 생성과 부하 테스트는 비용이 발생하므로 런북 기반 수동 실행으로 둔다.
+- Day 13은 실행 가능한 최종 검증 절차와 완료 판정 기준을 문서화하는 방식으로 완료한다.
+- AWS 배포 후 API 경로는 `terraform output -raw application_url`을 기준으로 호출한다.
+- 정상 상태의 CloudWatch Alarm은 `OK` 또는 `INSUFFICIENT_DATA`일 수 있으므로, 알람 존재와 장애 시 전환 가능성을 함께 확인한다.
+- 본격적인 부하 테스트는 개발 Terraform 기본 용량과 분리해 별도 테스트 계획으로 수행한다.
+
+### 검증
+
+```bash
+cd backend
+./gradlew test
+
+cd ..
+terraform fmt -recursive terraform
+terraform -chdir=terraform/environments/dev validate
+git diff --check
+```
+
 ## Day 14 - 포트폴리오 및 마감
 
-### 예정 작업
+### 완료 작업
 
 - README 정리
 - 프로젝트 스토리 작성
 - 기술 선택 이유 정리
 - 결과 이미지/다이어그램 정리
 - `docs/08_PORTFOLIO.md` 완성
+- Day 14 완료 상태를 `TASKS.md`에 반영했다.
+- 마이그레이션 문서에 Day 14 마감 기준을 추가했다.
+
+### 산출물
+
+- `README.md`
+- `docs/08_PORTFOLIO.md`
+- `docs/05_MIGRATION.md`
+- `docs/09_WORK_LOG.md`
+- `TASKS.md`
+
+### 결정 사항
+
+- Day 14는 새 기능 구현보다 포트폴리오와 산출물 정리를 완료 범위로 둔다.
+- 포트폴리오 설명은 "AWS 서비스를 사용했다"가 아니라 온프레미스와 AWS의 역할 차이, 유지한 API/데이터 계약, 운영 개선 효과를 중심으로 정리한다.
+- CloudWatch 지표는 단일 수치만으로 장애를 판단하지 않고 CPU/memory, ALB 5xx, 응답 시간, task 재시작, Lambda error를 함께 보는 기준으로 설명한다.
+- 결과 이미지는 온프레미스 실행, AWS 인프라, ECS/ALB 상태, S3/Lambda 후처리, CloudWatch 지표 순서로 정리한다.
+
+### 검증
+
+```bash
+git diff --check
+```

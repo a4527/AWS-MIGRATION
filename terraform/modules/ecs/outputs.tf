@@ -33,6 +33,11 @@ output "alb_dns_name" {
   value       = aws_lb.application.dns_name
 }
 
+output "alb_zone_id" {
+  description = "Public ALB canonical hosted zone ID."
+  value       = aws_lb.application.zone_id
+}
+
 output "target_group_arn" {
   description = "Application target group ARN."
   value       = aws_lb_target_group.application.arn

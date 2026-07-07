@@ -21,6 +21,14 @@ ecs_backend_image_tag = "latest"
 ecs_task_cpu          = 512
 ecs_task_memory       = 1024
 ecs_desired_count     = 2
+ecs_min_capacity      = 2
+ecs_max_capacity      = 4
+
+# Optional. Set both values to enable Route53, ACM DNS validation, and ALB HTTPS.
+# domain_name              = "api.example.com"
+# route53_hosted_zone_name = "example.com"
+
+file_processor_object_prefix = "files/"
 
 tags = {
   Owner = "portfolio"

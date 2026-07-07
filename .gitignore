@@ -10,6 +10,8 @@ backend/bin/
 
 *.class
 *.log
+__pycache__/
+*.py[cod]
 
 # Local environment and manual test artifacts
 .env

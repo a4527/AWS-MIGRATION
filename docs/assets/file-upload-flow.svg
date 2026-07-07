@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-labelledby="title desc">
+  <title id="title">File Upload and Processing Flow</title>
+  <desc id="desc">Upload flow showing file bytes stored in S3, metadata stored in Aurora, cache stored in ElastiCache, and Lambda triggered by S3 events.</desc>
+  <style>
+    .bg { fill: #f8fafc; }
+    .box { fill: #ffffff; stroke: #334155; stroke-width: 2; rx: 8; }
+    .store { fill: #ecfeff; stroke: #0891b2; stroke-width: 2; rx: 8; }
+    .event { fill: #faf5ff; stroke: #7c3aed; stroke-width: 2; rx: 8; }
+    .edge { stroke: #2563eb; stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    .data { stroke: #0f766e; stroke-width: 3; fill: none; marker-end: url(#arrow2); }
+    .async { stroke: #7c3aed; stroke-width: 3; fill: none; stroke-dasharray: 8 6; marker-end: url(#arrow3); }
+    .title { font: 700 28px Arial, sans-serif; fill: #0f172a; }
+    .label { font: 700 17px Arial, sans-serif; fill: #0f172a; }
+    .small { font: 13px Arial, sans-serif; fill: #475569; }
+    .num { font: 700 14px Arial, sans-serif; fill: #ffffff; }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow2" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#0f766e"/>
+    </marker>
+    <marker id="arrow3" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7c3aed"/>
+    </marker>
+  </defs>
+  <rect class="bg" width="1180" height="620"/>
+  <text class="title" x="48" y="58">Upload, Metadata, and Serverless Processing Flow</text>
+  <text class="small" x="48" y="84">Aurora stores metadata only. S3 stores file bytes. Lambda processes S3 events independently from the API response path.</text>
+
+  <rect class="box" x="64" y="220" width="160" height="88"/>
+  <text class="label" x="116" y="256">Client</text>
+  <text class="small" x="98" y="282">multipart upload</text>
+
+  <rect class="box" x="292" y="220" width="190" height="88"/>
+  <text class="label" x="334" y="256">Spring Boot</text>
+  <text class="small" x="324" y="282">validate + authorize</text>
+
+  <rect class="store" x="570" y="112" width="190" height="88"/>
+  <text class="label" x="644" y="148">S3</text>
+  <text class="small" x="610" y="174">object key: files/...</text>
+
+  <rect class="store" x="570" y="252" width="190" height="88"/>
+  <text class="label" x="622" y="288">Aurora</text>
+  <text class="small" x="600" y="314">files.storage_path</text>
+
+  <rect class="store" x="570" y="392" width="190" height="88"/>
+  <text class="label" x="614" y="428">ElastiCache</text>
+  <text class="small" x="598" y="454">files:metadata:{id}</text>
+
+  <rect class="event" x="858" y="112" width="190" height="88"/>
+  <text class="label" x="922" y="148">Lambda</text>
+  <text class="small" x="900" y="174">tag + metadata scan</text>
+
+  <rect class="event" x="858" y="252" width="190" height="88"/>
+  <text class="label" x="902" y="288">CloudWatch</text>
+  <text class="small" x="904" y="314">logs + alarms</text>
+
+  <path class="edge" d="M224 264 H292"/>
+  <path class="data" d="M482 246 C520 204 532 156 570 156"/>
+  <path class="data" d="M482 278 H570"/>
+  <path class="data" d="M482 302 C530 350 530 436 570 436"/>
+  <path class="async" d="M760 156 H858"/>
+  <path class="async" d="M953 200 V252"/>
+  <path class="async" d="M858 296 C796 266 784 202 760 174"/>
+
+  <circle cx="250" cy="264" r="14" fill="#2563eb"/><text class="num" x="246" y="269">1</text>
+  <circle cx="526" cy="198" r="14" fill="#0f766e"/><text class="num" x="522" y="203">2</text>
+  <circle cx="526" cy="278" r="14" fill="#0f766e"/><text class="num" x="522" y="283">3</text>
+  <circle cx="526" cy="390" r="14" fill="#0f766e"/><text class="num" x="522" y="395">4</text>
+  <circle cx="806" cy="156" r="14" fill="#7c3aed"/><text class="num" x="802" y="161">5</text>
+  <circle cx="953" cy="226" r="14" fill="#7c3aed"/><text class="num" x="949" y="231">6</text>
+
+  <text class="small" x="236" y="242">API request</text>
+  <text class="small" x="494" y="180">file bytes</text>
+  <text class="small" x="492" y="262">metadata</text>
+  <text class="small" x="486" y="372">cache update</text>
+  <text class="small" x="774" y="138">ObjectCreated</text>
+  <text class="small" x="970" y="226">errors/duration</text>
+
+  <rect x="64" y="530" width="1040" height="28" fill="#e0f2fe" rx="6"/>
+  <text class="small" x="84" y="549">Key point: the file does not pass through Aurora. Aurora stores metadata and the S3 object key used for later lookup/download.</text>
+</svg>
