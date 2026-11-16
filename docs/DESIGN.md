@@ -1,4 +1,4 @@
-# 02. Architecture
+구성요소의 책임·경계·데이터 흐름과 상세 설계의 진입점이다. 사용자 요구는 [요구사항](PRD.md), 현재 구현·검증 범위는 [진행 요약](PROGRESS.md), 선택 이유는 [결정 기록](DECISIONS.md)에서 관리한다.
 
 ## 온프레미스 아키텍처
 
@@ -48,6 +48,8 @@ Day 6 기준 각 구성요소는 Docker Compose 서비스로 실행한다. Clien
 5. 실제 바이너리 정리는 후속 운영 절차로 분리할 수 있다.
 
 ### 서버리스 후처리 흐름
+
+아래는 요구사항의 목표 흐름이다. [Day 11 기록](worklogs/LEGACY.md#day-11---lambda-모니터링-스케일링)에서 현재 후처리는 확장자 기반 가드·메타데이터 추출·S3 tag 기록이며, 실제 백신 엔진과 DB 상태 동기화는 후속 범위로 분리되어 있다. 아래 목표를 현재 구현 완료로 해석하지 않는다.
 
 1. 파일이 S3에 저장되면 ObjectCreated 이벤트가 발생한다.
 2. S3 이벤트가 Lambda를 호출한다.
@@ -183,3 +185,16 @@ Client
 - 온프레미스 요청 흐름이 문서화된다.
 - 각 구성요소의 책임이 분리된다.
 - AWS 섹션은 비교 기준만 제공하고 온프레미스 설명과 섞지 않는다.
+
+## 상세 설계 탐색
+
+| 범위 | 기준 문서 |
+| --- | --- |
+| 데이터 모델·상태·관계 | [DATABASE](design/DATABASE.md) |
+| 요청·응답·오류 계약 | [API](design/API.md) |
+| 온프레미스 → AWS 전환 | [MIGRATION](design/MIGRATION.md) |
+| 로컬·AWS 배포와 실행 순서 | [DEPLOYMENT](design/DEPLOYMENT.md) |
+| AWS 모듈·네트워크·권한·운영 한계 | [AWS](design/AWS.md) |
+| 기능 비교·장애·성능 검증 절차 | [VALIDATION](design/VALIDATION.md) |
+
+현재 상태는 [PROGRESS](PROGRESS.md), 수행 결과는 작업일지, 승인 근거는 [DECISIONS](DECISIONS.md)를 따른다. 상세 계약은 해당 문서에서만 관리한다.

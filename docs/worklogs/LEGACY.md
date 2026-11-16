@@ -1,6 +1,10 @@
-# 09. Work Log
+Day별 실제 작업 내역, 산출물, 검증 결과를 기록한다. [TASKS](../TASKS.md)는 작업 상태의 기준으로 유지하고, 이 문서는 작업 히스토리 추적에 사용한다.
 
-Day별 실제 작업 내역, 산출물, 검증 결과를 기록한다. `TASKS.md`는 체크리스트로 유지하고, 이 문서는 작업 히스토리 추적에 사용한다.
+새 날짜별 기록은 `worklogs/YYYY-MM-DD.md`에 작성한다. 기존 Day별 이력·결정 원문은 이 문서에 보존하고, 탐색은 [결정 목록](../DECISIONS.md)을 참조한다.
+
+## 날짜별 후속 기록
+
+- [2026-11-16 문서 체계 정리](2026-11-16.md)
 
 ## Day 1 - 요구사항 및 설계
 
@@ -15,16 +19,16 @@ Day별 실제 작업 내역, 산출물, 검증 결과를 기록한다. `TASKS.md
 
 ### 산출물
 
-- `docs/00_REQUIREMENTS.md`
-- `docs/01_ROADMAP.md`
-- `docs/02_ARCHITECTURE.md`
-- `docs/03_DATABASE.md`
-- `docs/04_API_SPEC.md`
-- `docs/05_MIGRATION.md`
-- `docs/06_DEPLOYMENT.md`
-- `docs/07_TROUBLESHOOTING.md`
-- `docs/08_PORTFOLIO.md`
-- `TASKS.md`
+- `docs/PRD.md`
+- `docs/TASKS.md`
+- `docs/DESIGN.md`
+- `docs/design/DATABASE.md`
+- `docs/design/API.md`
+- `docs/design/MIGRATION.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/PORTFOLIO.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -54,7 +58,7 @@ Day별 실제 작업 내역, 산출물, 검증 결과를 기록한다. `TASKS.md
 - JWT 인증 필터와 토큰 provider 골격을 추가했다.
 - 인증 실패와 권한 부족 응답을 JSON 형식으로 통일했다.
 - 기본 상태 확인 API `GET /api/health`를 추가했다.
-- Day 2 완료 상태를 `TASKS.md`에 반영했다.
+- Day 2 완료 상태를 `docs/TASKS.md`에 반영했다.
 - API, 배포, 마이그레이션 문서를 Day 2 구현 기준에 맞게 갱신했다.
 
 ### 산출물
@@ -127,7 +131,7 @@ BUILD SUCCESSFUL
 - 사용자 도메인 모델과 Repository 인터페이스 분리
 - Spring Security method security 적용
 - 인증/권한 API 통합 테스트 작성
-- Day 3 완료 상태를 `TASKS.md`에 반영했다.
+- Day 3 완료 상태를 `docs/TASKS.md`에 반영했다.
 - API, 배포, 마이그레이션 문서를 Day 3 구현 기준에 맞게 갱신했다.
 
 ### 산출물
@@ -183,7 +187,7 @@ BUILD SUCCESSFUL
 - 파일 저장소 `FileStorage` 인터페이스와 로컬 파일 시스템 구현 추가
 - 소유자 및 관리자 기준 파일 접근 제어 구현
 - 파일 API 통합 테스트 작성
-- Day 4 완료 상태를 `TASKS.md`에 반영했다.
+- Day 4 완료 상태를 `docs/TASKS.md`에 반영했다.
 - API, 배포, 마이그레이션 문서를 Day 4 구현 기준에 맞게 갱신했다.
 
 ### 산출물
@@ -243,7 +247,7 @@ BUILD SUCCESSFUL
 - Redis 기반 파일 단건 메타데이터 캐시 구현
 - MinIO 기반 `FileStorage` 구현
 - JPA 프로필 통합 테스트 작성
-- Day 5 완료 상태를 `TASKS.md`에 반영했다.
+- Day 5 완료 상태를 `docs/TASKS.md`에 반영했다.
 - 데이터베이스, 배포, 마이그레이션, README 문서를 Day 5 구현 기준에 맞게 갱신했다.
 
 ### 산출물
@@ -297,7 +301,7 @@ BUILD SUCCESSFUL
 - Docker Compose 기반 로컬 통합 실행 검증
 - Nginx를 통한 `/api/health`, `/actuator/health` 응답 검증
 - 애플리케이션 설정의 JWT, 서버 포트, 파일 업로드 제한, 로컬 저장 경로를 환경변수로 주입 가능하게 변경
-- Day 6 완료 상태를 `TASKS.md`에 반영했다.
+- Day 6 완료 상태를 `docs/TASKS.md`에 반영했다.
 - 배포, 아키텍처, 마이그레이션 문서를 Day 6 구현 기준에 맞게 갱신했다.
 
 ### 산출물
@@ -359,19 +363,19 @@ GET /actuator/health 200 OK
 
 ### 산출물
 
-- `docs/11_ONPREM_MANUAL_TEST.md`
-- `docs/04_API_SPEC.md`
-- `docs/02_ARCHITECTURE.md`
-- `docs/05_MIGRATION.md`
-- `docs/07_TROUBLESHOOTING.md`
-- `TASKS.md`
+- `docs/design/VALIDATION.md`
+- `docs/design/API.md`
+- `docs/DESIGN.md`
+- `docs/design/MIGRATION.md`
+- `docs/TROUBLESHOOTING.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
 - Day 7 검증은 자동화 스크립트가 아니라 사용자가 직접 실행하는 수동 체크리스트 기반으로 진행한다.
 - 기능 테스트는 Nginx 진입점 `localhost:8080`을 기준으로 수행한다.
 - 저장소 검증은 PostgreSQL 테이블, Redis 캐시 키, MinIO 버킷/object를 각각 직접 확인하는 방식으로 둔다.
-- 장애 시나리오는 `docs/11_ONPREM_MANUAL_TEST.md`에 수동 점검 절차로 정리한다.
+- 장애 시나리오는 `docs/design/VALIDATION.md`에 수동 점검 절차로 정리한다.
 - Redis는 캐시 계층이지만 현재 구현에서는 Redis 장애가 API 오류로 이어질 수 있으므로 운영 개선 후보로 기록한다.
 
 ### 검증
@@ -402,7 +406,7 @@ GET /actuator/health 200 OK
 - VPC, ECR, S3, IAM 기본 모듈 작성
 - Terraform state, tfvars, provider lock 파일 관련 ignore 규칙 보강
 - 아키텍처, 배포, 마이그레이션 문서를 Day 8 설계 기준으로 갱신
-- Day 8 완료 상태를 `TASKS.md`에 반영했다.
+- Day 8 완료 상태를 `docs/TASKS.md`에 반영했다.
 
 ### 산출물
 
@@ -417,10 +421,10 @@ GET /actuator/health 200 OK
 - `terraform/modules/s3/*`
 - `terraform/modules/iam/*`
 - `terraform/README.md`
-- `docs/02_ARCHITECTURE.md`
-- `docs/05_MIGRATION.md`
-- `docs/06_DEPLOYMENT.md`
-- `TASKS.md`
+- `docs/DESIGN.md`
+- `docs/design/MIGRATION.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -499,7 +503,7 @@ terraform validate 성공
 
 ### 추가 문서화
 
-- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`에 Day 8~Day 9 기준 Terraform 기반 AWS 인프라 설계를 1차 정리했다.
+- `docs/design/AWS.md`에 Day 8~Day 9 기준 Terraform 기반 AWS 인프라 설계를 1차 정리했다.
 
 ## Day 10 - ECS 배포 및 CI/CD
 
@@ -515,10 +519,10 @@ terraform validate 성공
 
 - `.github/workflows/backend-ci-cd.yml`
 - `terraform/modules/github-actions/*`
-- `docs/06_DEPLOYMENT.md`
-- `docs/05_MIGRATION.md`
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
-- `TASKS.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/design/MIGRATION.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -567,11 +571,11 @@ git diff --check
 - `terraform/modules/file-processor/*`
 - `terraform/modules/ecs/main.tf`
 - `terraform/environments/dev/main.tf`
-- `docs/05_MIGRATION.md`
-- `docs/06_DEPLOYMENT.md`
-- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
-- `TASKS.md`
+- `docs/design/MIGRATION.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/design/AWS.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -622,11 +626,11 @@ terraform -chdir=terraform/environments/dev validate
 - `terraform/modules/file-processor/main.tf`
 - `backend/src/main/java/com/example/fileshare/infra/storage/S3FileStorage.java`
 - `backend/src/main/resources/application-s3.yml`
-- `docs/05_MIGRATION.md`
-- `docs/06_DEPLOYMENT.md`
-- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
-- `TASKS.md`
+- `docs/design/MIGRATION.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/design/AWS.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -663,19 +667,19 @@ terraform -chdir=terraform/environments/dev validate
 - AWS 장애 복구 검증 대상을 ECS rolling deployment, ALB target health, S3 권한, Lambda 후처리로 나누어 정리했다.
 - CloudWatch Logs와 CloudWatch Alarm 확인 대상을 Day 11~12 Terraform 구성 기준으로 정리했다.
 - 개발 환경에서 수행 가능한 smoke 성능 점검 절차를 추가했다.
-- `docs/14_FINAL_VALIDATION.md`의 중복된 AWS 전환 가치 설명을 검증 매트릭스로 줄였다.
+- `docs/design/VALIDATION.md`의 중복된 AWS 전환 가치 설명을 검증 매트릭스로 줄였다.
 - AWS 장애 복구 검증에 ECS task `stop-task` 실패 주입, Lambda malformed event 실패 주입, 로그 확인, 정상 복구 확인 절차를 추가했다.
 - 마이그레이션 문서의 Day 13 장애 복구 기준을 실제 실패 주입과 복구 검증 기준에 맞게 갱신했다.
-- Day 13 완료 상태를 `TASKS.md`에 반영했다.
+- Day 13 완료 상태를 `docs/TASKS.md`에 반영했다.
 - 마이그레이션 문서에 Day 13 최종 검증 기준을 추가했다.
 
 ### 산출물
 
-- `docs/14_FINAL_VALIDATION.md`
-- `docs/05_MIGRATION.md`
-- `docs/09_WORK_LOG.md`
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`
-- `TASKS.md`
+- `docs/design/VALIDATION.md`
+- `docs/design/MIGRATION.md`
+- `docs/worklogs/LEGACY.md`
+- `docs/design/DEPLOYMENT.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -705,17 +709,17 @@ git diff --check
 - 프로젝트 스토리 작성
 - 기술 선택 이유 정리
 - 결과 이미지/다이어그램 정리
-- `docs/08_PORTFOLIO.md` 완성
-- Day 14 완료 상태를 `TASKS.md`에 반영했다.
+- `docs/PORTFOLIO.md` 완성
+- Day 14 완료 상태를 `docs/TASKS.md`에 반영했다.
 - 마이그레이션 문서에 Day 14 마감 기준을 추가했다.
 
 ### 산출물
 
 - `README.md`
-- `docs/08_PORTFOLIO.md`
-- `docs/05_MIGRATION.md`
-- `docs/09_WORK_LOG.md`
-- `TASKS.md`
+- `docs/PORTFOLIO.md`
+- `docs/design/MIGRATION.md`
+- `docs/worklogs/LEGACY.md`
+- `docs/TASKS.md`
 
 ### 결정 사항
 
@@ -729,3 +733,215 @@ git diff --check
 ```bash
 git diff --check
 ```
+
+
+## 최초 일정 계획 보관
+
+기존 ROADMAP의 최초 계획을 보존한다. 실제 완료 여부나 후속 일정은 이 계획으로 판단하지 않고 [작업 목록](../TASKS.md)을 따른다. Day 기록의 실제 날짜는 확인되지 않아 날짜별 파일로 소급 분할하지 않았다.
+
+## 2주 일정 개요
+
+이 로드맵은 10영업일 기준으로 구성한다.
+
+- Week 1: 온프레미스 서비스 완성
+- Week 2: AWS 마이그레이션 및 운영 자동화
+
+## Week 1 - 온프레미스 구축
+
+### Day 1: 요구사항 및 설계
+
+- 서비스 범위 확정
+- 사용자 역할 정의
+- 파일 라이프사이클 정의
+- API 초안 작성
+- DB 엔티티 초안 작성
+- 온프레미스 아키텍처 초안 작성
+
+산출물:
+
+- `docs/PRD.md`
+- `docs/DESIGN.md` 초안
+- `docs/design/DATABASE.md` 초안
+- `docs/design/API.md` 초안
+
+### Day 2: Spring Boot 프로젝트 골격
+
+- Spring Boot 프로젝트 생성
+- 패키지 구조 설계
+- 공통 응답 포맷 정의
+- 예외 처리 구조 구성
+- JWT 보안 설정 골격 작성
+
+산출물:
+
+- 백엔드 기본 구조
+- 보안/예외 처리 기본 틀
+
+### Day 3: 인증 및 사용자 관리
+
+- 회원가입 구현
+- 로그인 구현
+- JWT 발급/검증 구현
+- 사용자 조회 API 구현
+- 권한 기반 접근 제어 적용
+
+산출물:
+
+- 인증 플로우 동작
+- 사용자 관리 API
+
+### Day 4: 파일 CRUD
+
+- 업로드 API 구현
+- 다운로드 API 구현
+- 삭제 API 구현
+- 메타데이터 저장 로직 구현
+- 파일 확장자/크기 검증
+
+산출물:
+
+- 파일 공유 핵심 기능
+- API 예시 정리
+
+### Day 5: PostgreSQL, Redis, MinIO 연동
+
+- PostgreSQL 테이블 확정
+- JPA 엔티티 및 Repository 작성
+- Redis 캐시 적용
+- MinIO 연동
+- 로컬 파일 저장소 대체 확인
+
+산출물:
+
+- `docs/design/DATABASE.md` 완성
+- 스토리지 및 캐시 연동 완료
+
+### Day 6: Docker Compose 및 Nginx
+
+- Dockerfile 작성
+- Docker Compose 구성
+- Nginx reverse proxy 설정
+- 환경변수 분리
+- 로컬 통합 실행 검증
+
+산출물:
+
+- Docker Compose 기반 실행 환경
+
+### Day 7: 온프레미스 검증 및 문서화
+
+- 기능 테스트
+- 장애 시나리오 점검
+- API 문서 정리
+- 트러블슈팅 초안 작성
+- 온프레미스 아키텍처 문서 마무리
+
+산출물:
+
+- 온프레미스 완성본
+- API 문서
+- ERD
+- 아키텍처 문서
+
+## Week 2 - AWS Cloud Migration
+
+### Day 8: AWS 인프라 설계 및 Terraform 시작
+
+- VPC 설계
+- ECS, ECR, IAM, ALB, Route53, ACM 범위 정의
+- Terraform 프로젝트 구조 생성
+- 환경별 변수 체계 설계
+
+산출물:
+
+- `terraform/` 기본 구조
+- AWS 인프라 설계 문서
+
+### Day 9: ECS 및 데이터/스토리지 이전
+
+- ECS 클러스터와 Fargate 서비스 배포
+- Aurora PostgreSQL 구성
+- ElastiCache 계획 반영
+- S3 업로드 구조로 전환
+- Secrets 및 IAM 정책 정리
+
+산출물:
+
+- AWS 데이터/스토리지 마이그레이션 설계
+
+### Day 10: ECS 배포 및 CI/CD
+
+- ECS task definition 배포 흐름 작성
+- GitHub Actions CI/CD 구축
+- ECR 빌드/푸시 연동
+- ECS service 배포 자동화
+
+산출물:
+
+- CI/CD 파이프라인
+- ECS 배포 흐름
+
+### Day 11: Lambda, 모니터링, 스케일링
+
+- S3 이벤트 기반 Lambda 구성
+- 바이러스 검사 및 메타데이터 추출 후처리 구현
+- CloudWatch 로그/지표 설정
+- Auto Scaling 정책 구성
+- 헬스체크 및 롤링 배포 확인
+
+산출물:
+
+- 관측성 및 확장성 구성
+
+### Day 12: HTTPS 및 보안 강화
+
+- Route53 도메인 연결
+- ACM 인증서 적용
+- ALB HTTPS 구성
+- IAM 최소 권한 원칙 점검
+- 공개/비공개 리소스 분리 확인
+
+산출물:
+
+- 보안 강화된 운영 환경
+
+### Day 13: 최종 검증 및 성능 점검
+
+- 온프레미스 vs AWS 동작 비교
+- 업로드/다운로드 시나리오 테스트
+- 장애 복구 시나리오 테스트
+- 로그 및 알람 확인
+
+산출물:
+
+- 최종 시스템 아키텍처
+- 검증 결과 요약
+
+### Day 14: 포트폴리오 및 마감
+
+- README 정리
+- 프로젝트 스토리 작성
+- 기술 선택 이유 정리
+- 결과 이미지/다이어그램 정리
+- `docs/PORTFOLIO.md` 완성
+
+산출물:
+
+- 포트폴리오 문서
+- 최종 제출본
+
+## 일정 리스크
+
+- AWS 인프라 생성 권한 부족
+- ECS/ALB 구성 시간 지연
+- S3/Aurora 전환 중 데이터 불일치
+- CI/CD와 보안 정책 조정 지연
+
+## 우선순위
+
+1. 파일 업로드/다운로드 핵심 기능
+2. 인증/권한
+3. 온프레미스 안정화
+4. AWS 마이그레이션
+5. CI/CD 및 관측성
+6. 포트폴리오 정리

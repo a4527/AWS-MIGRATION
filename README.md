@@ -148,16 +148,11 @@ http://localhost:9001
 
 ## 문서
 
-- `docs/00_REQUIREMENTS.md`: 요구사항
-- `docs/02_ARCHITECTURE.md`: 온프레미스/AWS 아키텍처
-- `docs/04_API_SPEC.md`: API 명세
-- `docs/05_MIGRATION.md`: 마이그레이션 전략
-- `docs/06_DEPLOYMENT.md`: 배포 문서
-- `docs/08_PORTFOLIO.md`: 포트폴리오 설명
-- `docs/11_ONPREM_MANUAL_TEST.md`: 온프레미스 수동 검증
-- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`: Terraform AWS 인프라 요약
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`: AWS 배포 런북
-- `docs/14_FINAL_VALIDATION.md`: 최종 검증
+- [작업 목록](docs/TASKS.md) · [현재 상태](docs/PROGRESS.md)
+- [요구사항](docs/PRD.md) · [설계](docs/DESIGN.md) · [포트폴리오](docs/PORTFOLIO.md)
+- 전체 기준 위치와 작성 규칙은 [AGENTS.md](AGENTS.md#문서-책임)를 따른다.
+
+문서·Terraform 코드의 존재는 실제 AWS 배포·검증 완료를 뜻하지 않습니다. 수행 근거와 한계는 작업일지에 기록합니다.
 
 ## 포트폴리오 이미지
 

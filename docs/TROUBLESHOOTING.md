@@ -1,5 +1,3 @@
-# 07. Troubleshooting
-
 ## 온프레미스 공통 확인 순서
 
 장애 원인을 좁힐 때는 아래 순서로 확인한다.
@@ -109,12 +107,11 @@ curl -i http://localhost:8080/actuator/health
 - 증상
 - 원인
 - 해결 방법
+- 재검증 방법·결과와 한계 (실제 실행한 경우 작업일지 연결)
 - 재발 방지 체크리스트
 
-## AWS 전환 이후 확장 예정 이슈
+<a id="aws-전환-이후-확장-예정-이슈"></a>
 
-- ECS 서비스 배포 실패
-- ALB 헬스체크 실패
-- HTTPS 인증서 적용 문제
-- S3 권한 오류
-- Aurora/ElastiCache 보안 그룹 연결 실패
+## AWS 진단 연결
+
+ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 확인 순서는 [AWS 런북의 문제 확인 절](design/DEPLOYMENT.md#11-문제-발생-시-확인-순서)을 따른다. 실제로 재사용할 해결 사례가 생기면 이 문서에 증상·원인·해결·재검증 근거를 추가한다.

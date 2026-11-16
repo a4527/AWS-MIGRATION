@@ -1,4 +1,4 @@
-# 05. Migration
+전환 전략과 단계별 기준을 관리한다. 개별 API·데이터 계약은 [API 명세](API.md)와 [데이터 모델](DATABASE.md), 실제 실행 순서는 [AWS 런북](DEPLOYMENT.md)을 따른다. 현재 검증 상태는 [진행 요약](../PROGRESS.md), 문서별 갱신 책임은 [문서 안내](../../AGENTS.md#문서-책임), 단일 기준 문서와 누적 이력의 배치는 [문서 관리](../../AGENTS.md#갱신-규칙)를 참조한다. 기존 Day별 기준은 이력으로 보존하며 검증 절차 작성과 실제 AWS 검증 완료를 구분한다.
 
 ## Migration Strategy
 
@@ -7,7 +7,7 @@
 ## 전제
 
 - 애플리케이션의 기능 계약은 온프레미스와 AWS에서 동일하게 유지한다.
-- 파일 상태와 삭제 정책은 `docs/00_REQUIREMENTS.md` 기준을 따른다.
+- 파일 상태와 삭제 정책은 `docs/PRD.md` 기준을 따른다.
 - DB 스키마와 API 응답 형식은 가능한 한 변경하지 않는다.
 
 ### Storage
@@ -188,4 +188,16 @@
 - Redis에서 ElastiCache로의 전환은 `files:metadata:{fileId}` 캐시 키 유지와 managed cache 운영 전환을 함께 설명한다.
 - Docker Compose/Nginx에서 ECS/ALB로의 전환은 health check, target group, rolling deployment, scheduler self-healing 기준으로 설명한다.
 - CloudWatch 지표는 CPU/memory 단일 수치가 아니라 ALB 5xx, target health, Lambda error, ECS task 재시작 여부와 함께 장애 판단 기준으로 정리한다.
-- Day 14 마감 후 남은 작업은 운영 보강 항목으로 분리하고, 현재 프로젝트는 2주 마이그레이션 포트폴리오 산출물 완성을 완료 기준으로 둔다.
+- Day 14 마감 후 남은 작업은 운영 보강 항목으로 분리하고, 당시 마감 기준은 2주 마이그레이션 포트폴리오 산출물 완성이었다. 현재 후속 범위는 아래 계획과 TASKS를 따른다.
+
+
+## 후속 운영 보강 계획
+
+2026-11-16 사용자 요청으로 [포트폴리오 보강 작업](../TASKS.md#포트폴리오-보강-작업)을 등록했다. 기존 Day별 구현 이력 이후의 계획이며 현재 배포 구성이나 API·DB·object key·cache key 계약을 변경한 것은 아니다.
+
+- 온프레미스는 AWS와 비교할 기능·데이터 기준선으로 유지하고 VERIFY-01/02의 실제 실행 근거를 확보한다.
+- AWS는 IaC 변경 통제·비밀값 주입·배포 검증과 롤백·관측 및 알림·백업 복원을 순차 보강한다. 구현·검증 전에는 기존 한계를 해소한 것으로 표시하지 않는다.
+- ECS 배포 버전과 Auto Scaling desired count에 대한 Terraform/CD의 관리 책임을 정리하고, 데이터 복원 시 DB storage_path와 S3 object/version 정합성을 검증한다.
+- 비용·가용성·파일 전송 방식의 대안은 측정과 비교 후 판단한다. EKS 및 presigned URL 등은 이번 계획 등록으로 채택하지 않는다. 외부 계약 변경을 채택할 경우 요구사항·아키텍처·DB/API·배포·검증 문서의 해당 계약을 먼저 갱신한다.
+
+의존성·수용 기준은 TASKS, 단계 순서는 [작업 순서](../TASKS.md#권장-착수-순서와-증빙), 실제 결과는 수행일의 작업일지에서 관리한다.

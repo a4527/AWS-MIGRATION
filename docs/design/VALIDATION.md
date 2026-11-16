@@ -1,4 +1,425 @@
-# 14. Final Validation
+기능·저장소·장애·성능의 검증 절차를 관리한다. 실행 결과는 수행일의 작업일지에 기록하며 절차 작성과 검증 성공을 구분한다.
+
+## 온프레미스 검증
+
+Day 7 온프레미스 검증을 직접 수행하기 위한 수동 테스트 절차다.
+
+자동화 스크립트로 한 번에 실행하지 않고, 아래 순서대로 하나씩 실행하며 응답과 저장소 상태를 확인한다.
+
+### 1. Compose 스택 시작
+
+```bash
+docker compose up --build -d
+```
+
+상태 확인:
+
+```bash
+docker compose ps
+```
+
+확인 기준:
+
+- `postgres`, `redis`가 `healthy` 상태다.
+- `backend`, `nginx`, `minio`가 `Up` 상태다.
+
+### 2. Health 확인
+
+```bash
+curl http://localhost:8080/api/health
+```
+
+기대 결과:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "UP"
+  },
+  "message": "OK"
+}
+```
+
+Actuator health:
+
+```bash
+curl http://localhost:8080/actuator/health
+```
+
+기대 결과:
+
+```json
+{
+  "status": "UP"
+}
+```
+
+### 3. 회원가입
+
+이미 같은 이메일로 가입했다면 이메일 뒤 숫자를 바꾼다.
+
+```bash
+curl -X POST http://localhost:8080/api/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user1@example.com","password":"Password123!","name":"홍길동"}'
+```
+
+확인 기준:
+
+- `success`가 `true`다.
+- `data.email`이 요청한 이메일과 같다.
+- `data.role`이 `USER`다.
+
+### 4. 로그인 및 토큰 저장
+
+`jq`가 있을 때:
+
+```bash
+ACCESS_TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user1@example.com","password":"Password123!"}' \
+  | jq -r '.data.accessToken')
+```
+
+토큰 확인:
+
+```bash
+echo "$ACCESS_TOKEN"
+```
+
+`jq`가 없으면 로그인 응답에서 `data.accessToken` 값을 직접 복사한다.
+
+```bash
+curl -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user1@example.com","password":"Password123!"}'
+```
+
+직접 복사한 뒤:
+
+```bash
+ACCESS_TOKEN='<login-response-access-token>'
+```
+
+### 5. 현재 사용자 조회
+
+```bash
+curl http://localhost:8080/api/users/me \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+확인 기준:
+
+- 현재 로그인한 사용자 정보가 반환된다.
+
+### 6. 사용자 이름 수정
+
+```bash
+curl -X PATCH http://localhost:8080/api/users/me \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"홍길동2"}'
+```
+
+확인 기준:
+
+- `data.name`이 `홍길동2`로 변경된다.
+
+### 7. 파일 업로드
+
+테스트 파일 생성:
+
+```bash
+printf 'hello file api\n' > sample.txt
+```
+
+업로드:
+
+```bash
+UPLOAD_RESPONSE=$(curl -s -X POST http://localhost:8080/api/files \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -F "file=@./sample.txt" \
+  -F "description=manual test file")
+```
+
+응답 확인:
+
+```bash
+echo "$UPLOAD_RESPONSE"
+```
+
+응답의 파일 ID를 저장한다.
+
+`jq`가 있을 때:
+
+```bash
+FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.fileId')
+```
+
+직접 저장할 때:
+
+```bash
+FILE_ID='<upload-response-file-id>'
+```
+
+확인 기준:
+
+- `data.fileId`가 있다.
+- `data.originalFileName`이 `sample.txt`다.
+- `data.status`가 `available` 상태다.
+
+### 8. 파일 목록 조회
+
+```bash
+curl http://localhost:8080/api/files \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+확인 기준:
+
+- 업로드한 파일이 목록에 포함된다.
+
+### 9. 파일 메타데이터 단건 조회
+
+```bash
+curl http://localhost:8080/api/files/${FILE_ID} \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+확인 기준:
+
+- `fileId`가 `${FILE_ID}`와 같다.
+- 이 요청 이후 Redis 캐시 확인이 가능하다.
+
+### 10. 파일 다운로드
+
+```bash
+curl -L http://localhost:8080/api/files/${FILE_ID}/download \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -o downloaded-sample.txt
+```
+
+다운로드 결과 확인:
+
+```bash
+cat downloaded-sample.txt
+```
+
+기대 결과:
+
+```text
+hello file api
+```
+
+### 11. PostgreSQL 저장 확인
+
+```bash
+docker compose exec postgres psql -U fileshare -d fileshare
+```
+
+`psql` 안에서:
+
+```sql
+SELECT id, email, name, role, created_at
+FROM users
+ORDER BY id;
+
+SELECT id, owner_id, original_file_name, stored_file_name, storage_path, status, scan_status, created_at
+FROM files
+ORDER BY id;
+```
+
+종료:
+
+```sql
+\q
+```
+
+확인 기준:
+
+- 가입한 사용자가 `users`에 있다.
+- 업로드한 파일 메타데이터가 `files`에 있다.
+- `storage_path` 값이 MinIO object key로 사용된다.
+
+### 12. Redis 캐시 확인
+
+파일 업로드 또는 단건 조회 이후 실행한다.
+
+```bash
+docker compose exec redis redis-cli KEYS 'files:metadata:*'
+```
+
+특정 파일 캐시 확인:
+
+```bash
+docker compose exec redis redis-cli GET "files:metadata:${FILE_ID}"
+docker compose exec redis redis-cli TTL "files:metadata:${FILE_ID}"
+```
+
+확인 기준:
+
+- 캐시 키 형식은 `files:metadata:{fileId}`다.
+- TTL은 남은 초 단위로 표시된다.
+
+### 13. MinIO 저장 확인
+
+브라우저에서 접속한다.
+
+```text
+http://localhost:9001
+```
+
+로그인:
+
+```text
+Username: minioadmin
+Password: minioadmin
+```
+
+확인 기준:
+
+- 첫 업로드 이후 `files` 버킷이 생성되어 있다.
+- PostgreSQL `files.storage_path`와 같은 object key가 버킷 안에 있다.
+
+### 14. 파일 삭제
+
+```bash
+curl -X DELETE http://localhost:8080/api/files/${FILE_ID} \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+확인 기준:
+
+- 삭제 응답이 성공한다.
+- 파일은 물리 삭제가 아니라 메타데이터 상태가 삭제 상태로 바뀐다.
+
+삭제 후 조회:
+
+```bash
+curl http://localhost:8080/api/files/${FILE_ID} \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+기대 결과:
+
+- `RESOURCE_NOT_FOUND`가 반환된다.
+
+### 15. 실패 케이스 확인
+
+#### 인증 없이 보호 API 호출
+
+```bash
+curl http://localhost:8080/api/users/me
+```
+
+기대 결과:
+
+- `AUTH_INVALID_TOKEN`
+
+#### 허용되지 않는 확장자 업로드
+
+```bash
+printf 'not allowed\n' > sample.exe
+
+curl -X POST http://localhost:8080/api/files \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -F "file=@./sample.exe"
+```
+
+기대 결과:
+
+- `FILE_INVALID_TYPE`
+
+#### 일반 사용자로 특정 사용자 조회
+
+```bash
+curl http://localhost:8080/api/users/1 \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+```
+
+기대 결과:
+
+- 일반 `USER` 토큰이면 `AUTH_ACCESS_DENIED`
+
+### 16. 스택 중지
+
+컨테이너와 네트워크만 내린다. 볼륨 데이터는 유지된다.
+
+```bash
+docker compose down
+```
+
+데이터까지 초기화할 때만 사용한다.
+
+```bash
+docker compose down -v
+```
+
+### 17. 장애 시나리오 수동 점검
+
+장애 시나리오는 정상 기능 검증이 끝난 뒤 선택적으로 수행한다. 각 시나리오 후에는 서비스를 다시 시작한다.
+
+#### Backend 중지
+
+```bash
+docker compose stop backend
+curl -i http://localhost:8080/api/health
+docker compose start backend
+```
+
+확인 기준:
+
+- Nginx는 떠 있지만 백엔드 upstream 연결 실패가 발생한다.
+- `docker compose logs nginx`에서 upstream 오류를 확인할 수 있다.
+
+#### PostgreSQL 중지
+
+```bash
+docker compose stop postgres
+curl -i -X POST http://localhost:8080/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"user1@example.com","password":"Password123!"}'
+docker compose start postgres
+```
+
+확인 기준:
+
+- DB가 필요한 API가 실패한다.
+- `docker compose logs backend`에서 DB 연결 오류를 확인할 수 있다.
+
+#### Redis 중지
+
+```bash
+docker compose stop redis
+curl -i http://localhost:8080/api/files/${FILE_ID} \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+docker compose start redis
+```
+
+확인 기준:
+
+- 현재 구현에서는 Redis 캐시 접근 실패가 API 오류로 이어질 수 있다.
+- 운영 개선 시 Redis 장애를 원본 DB 조회로 우회하는 보완이 필요하다.
+
+#### MinIO 중지
+
+```bash
+docker compose stop minio
+curl -i -X POST http://localhost:8080/api/files \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -F "file=@./sample.txt"
+docker compose start minio
+```
+
+확인 기준:
+
+- 업로드 또는 다운로드가 실패한다.
+- 응답은 `FILE_UPLOAD_FAILED` 또는 서버 오류로 확인한다.
+
+## 환경 비교·실패·성능 검증
+
+이 문서는 검증 방법과 판정 기준이다. 실행 결과 보고서가 아니며, 기존 Day 13 작업의 완료 범위는 [작업일지](../worklogs/LEGACY.md#day-13---최종-검증-및-성능-점검)에 명시된 절차 문서화다. 실제 실행 결과는 당일 작업일지에 기록하고 [후속 검증 작업](../TASKS.md#후속-검증-작업)에 연결한다.
 
 Day 13 최종 검증은 온프레미스 Docker Compose 환경에서 구현한 기능 계약이 AWS ECS/서버리스 환경에서도 유지되는지 확인하고, AWS 전환으로 개선되는 운영 특성을 함께 검증한다.
 
@@ -7,9 +428,9 @@ Day 13 최종 검증은 온프레미스 Docker Compose 환경에서 구현한 �
 - 사용자 관점의 API 동작은 온프레미스와 AWS에서 동일해야 한다.
 - 운영 관점에서는 AWS의 관리형 서비스, 서버리스 후처리, Auto Scaling, CloudWatch 관측성, HTTPS/IAM 보안 이점이 온프레미스 구성보다 명확해야 한다.
 
-실제 AWS 리소스 검증은 비용이 발생하므로 `docs/13_AWS_DEPLOYMENT_RUNBOOK.md` 순서대로 Terraform apply와 GitHub Actions 배포를 완료한 뒤 수행한다.
+실제 AWS 리소스 검증은 비용이 발생하므로 `docs/design/DEPLOYMENT.md` 순서대로 Terraform apply와 GitHub Actions 배포를 완료한 뒤 수행한다.
 
-## 1. 검증 범위
+### 1. 검증 범위
 
 기능 동일성:
 
@@ -28,7 +449,7 @@ AWS 전환 효과:
 - 로컬 로그 확인 중심의 장애 분석이 CloudWatch Logs와 CloudWatch Alarm 기반 관측성으로 확장되는지 확인한다.
 - HTTP/Nginx 중심 진입점이 Route53, ACM, ALB HTTPS 구성으로 보안 강화되는지 확인한다.
 
-## 2. 온프레미스와 AWS 비교 요약
+### 2. 온프레미스와 AWS 비교 요약
 
 | 영역 | 온프레미스 기준 | AWS 기준 | 부각할 개선점 |
 | --- | --- | --- | --- |
@@ -43,7 +464,7 @@ AWS 전환 효과:
 | 로그/알람 | `docker compose logs` | CloudWatch Logs/Alarms | 중앙화된 로그, 지표 기반 장애 감지 |
 | 확장 | compose scale 또는 수동 증설 | ECS Service Auto Scaling | CPU/memory 기반 자동 확장 |
 
-## 3. AWS 전환 가치 검증 매트릭스
+### 3. AWS 전환 가치 검증 매트릭스
 
 상세 실행 절차는 5장 이후에서 한 번만 다룬다. 이 장은 최종 검증에서 어떤 운영 개선을 증명해야 하는지 정리한다.
 
@@ -56,7 +477,7 @@ AWS 전환 효과:
 | 관측성 | backend log group, Lambda log group, CloudWatch alarm/metric | API 처리와 파일 후처리 로그가 분리되고 장애 원인을 로그와 지표로 추적할 수 있다. |
 | 확장성 | ECS Service Auto Scaling, ALB target group, Lambda metrics | API 서버, object 저장소, 후처리 실행 단위의 확장 책임을 분리해서 설명할 수 있다. |
 
-## 4. 환경별 진입점
+### 4. 환경별 진입점
 
 온프레미스:
 
@@ -77,7 +498,7 @@ FILE_PROCESSOR_LOG_GROUP=$(terraform output -raw file_processor_log_group_name)
 
 도메인/HTTPS를 설정하지 않은 dev 환경에서는 `application_url`이 ALB HTTP URL을 반환한다. HTTPS가 설정된 환경에서는 같은 API 경로를 HTTPS 기준으로 호출한다.
 
-## 5. 공통 API 비교
+### 5. 공통 API 비교
 
 두 환경에서 같은 순서로 실행한다.
 
@@ -126,7 +547,7 @@ curl -s "$BASE_URL/api/users/me" \
 - 로그인 응답에 `data.accessToken`이 있다.
 - 현재 사용자 조회의 email, name, role 형식이 두 환경에서 동일하다.
 
-## 6. 업로드/다운로드 시나리오
+### 6. 업로드/다운로드 시나리오
 
 테스트 파일:
 
@@ -182,7 +603,7 @@ curl -s "$BASE_URL/api/files/$FILE_ID" \
 - 다운로드 파일은 원본과 `diff` 차이가 없다.
 - 삭제 후 단건 조회는 `RESOURCE_NOT_FOUND` 계열 응답을 반환한다.
 
-## 7. 저장소와 서버리스 후처리 비교
+### 7. 저장소와 서버리스 후처리 비교
 
 온프레미스:
 
@@ -288,13 +709,13 @@ AWS 개선 확인 기준:
 - S3 object tag만 확인해도 후처리 결과를 추적할 수 있다.
 - S3 object 접근 권한은 bucket 전체가 아니라 `files/` prefix 기준으로 제한된다.
 
-## 8. 장애 복구 시나리오
+### 8. 장애 복구 시나리오
 
-온프레미스 장애 점검은 `docs/11_ONPREM_MANUAL_TEST.md`의 장애 시나리오 수동 점검을 따른다.
+온프레미스 장애 점검은 `docs/design/VALIDATION.md`의 장애 시나리오 수동 점검을 따른다.
 
 AWS 장애 점검은 실제 실패를 한 번 만든 뒤 로그를 확인하고 정상 동작으로 복구되는지까지 본다. 운영 공유 환경에서는 사전에 영향 시간을 공지하고, dev 환경에서만 수행한다.
 
-### 8.1 ECS task 중지 실패 주입
+#### 8.1 ECS task 중지 실패 주입
 
 ```bash
 ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)
@@ -353,7 +774,7 @@ curl -s -o /dev/null -w "%{http_code}\n" "$AWS_BASE_URL/api/health"
 - health API가 `200`을 반환한다.
 - 장애 원인은 ECS stopped task, service event, backend log stream 중 최소 한 곳에서 추적 가능하다.
 
-### 8.2 Lambda 실패 주입과 정상 재처리
+#### 8.2 Lambda 실패 주입과 정상 재처리
 
 S3 이벤트 형식은 유지하되 `s3` 필드를 누락한 payload로 Lambda를 직접 호출한다. 실제 S3 object나 backend API 데이터는 변경하지 않는다.
 
@@ -409,7 +830,7 @@ echo "$UPLOAD_RESPONSE" | jq
 - S3 object tag에 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`가 기록된다.
 - backend health API와 업로드 API는 Lambda 실패 주입 이후에도 정상 동작한다.
 
-### 8.3 설정 오류 분석 체크리스트
+#### 8.3 설정 오류 분석 체크리스트
 
 실패 주입 없이 운영 중 오류가 발생했다면 다음 순서로 원인을 좁힌다.
 
@@ -417,7 +838,7 @@ echo "$UPLOAD_RESPONSE" | jq
 - S3 권한 오류는 backend log의 `AccessDenied`, IAM task role의 `arn:aws:s3:::<bucket>/files/*` 권한, 실제 object key prefix를 함께 확인한다.
 - Lambda 후처리 오류는 Lambda error log, `fileshare-dev-file-processor-errors` alarm, S3 event notification prefix, Lambda execution role의 S3 prefix 권한을 함께 확인한다.
 
-## 9. 로그 및 알람 확인
+### 9. 로그 및 알람 확인
 
 로그 그룹 확인은 7장의 정상 업로드 검증과 8장의 실패 주입 검증에서 수행한다. 이 장에서는 알람 구성이 존재하고 실패 주입 이후 상태 전환을 추적할 수 있는지만 확인한다.
 
@@ -449,7 +870,7 @@ aws cloudwatch describe-alarms \
 - 8장의 실패 주입 후 관련 alarm이 평가 주기와 임계치에 따라 `ALARM`으로 전환되거나 alarm history에 실패 지표가 남는다.
 - 온프레미스의 `docker compose logs`보다 AWS 환경에서는 backend, Lambda, ALB, ECS 지표가 CloudWatch에 모여 장애 원인을 분리해 볼 수 있다.
 
-## 10. 성능 및 확장성 점검
+### 10. 성능 및 확장성 점검
 
 개발 환경에서는 비용과 용량을 고려해 짧은 smoke 성능 점검만 수행한다.
 
@@ -470,7 +891,7 @@ done
 - 온프레미스에서는 scale out이 컨테이너 수와 Nginx upstream 조정에 의존하지만, AWS에서는 ECS desired count와 Auto Scaling policy로 조정 가능해야 한다.
 - 실제 부하 테스트는 별도 테스트 계정, 비용 예산, 알람 action을 준비한 뒤 수행한다.
 
-## 11. 완료 판정
+### 11. 완료 판정
 
 Day 13 완료 기준:
 

@@ -1,5 +1,3 @@
-# 04. API 명세
-
 ## 공통 규칙
 
 - 모든 응답은 JSON을 기본으로 한다.
@@ -482,4 +480,4 @@ description: project plan
 - 파일 단건 조회와 업로드 이후 Redis에 `files:metadata:{fileId}` 형식의 캐시가 생성될 수 있다.
 - 같은 파일을 중복 업로드하면 현재 구현에서는 새 파일로 취급하며, 별도의 파일명/hash 중복 제한은 없다.
 - `POST /api/auth/refresh`, `POST /api/auth/logout`은 API 문서상 예정 계약이며 Day 7 온프레미스 검증 대상에서 제외한다.
-- 수동 검증 절차는 `docs/11_ONPREM_MANUAL_TEST.md`를 기준으로 한다.
+- 수동 검증 절차는 `docs/design/VALIDATION.md`를 기준으로 한다.

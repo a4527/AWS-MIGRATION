@@ -1,5 +1,3 @@
-# 12. Terraform AWS Infra Summary
-
 이 문서는 Terraform으로 구성한 AWS 개발 환경을 자세히 설명한다.
 
 초기 설계는 다른 컨테이너 오케스트레이션 방식을 고려했지만, 현재 기준의 애플리케이션 실행 환경은 ECS Fargate이다. 따라서 이 문서는 ECS, ALB, Aurora, ElastiCache, S3, ECR, IAM, Security Group, VPC를 기준으로 정리한다.

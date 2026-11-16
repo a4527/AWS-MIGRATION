@@ -1,6 +1,12 @@
 name: Backend CI/CD
 
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci-cd.yml"
   push:
     branches:
       - main
@@ -11,7 +17,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 env:
   AWS_REGION: ap-northeast-2
@@ -19,6 +24,7 @@ env:
   ECS_CLUSTER: fileshare-dev-ecs
   ECS_SERVICE: fileshare-dev-backend
   ECS_CONTAINER_NAME: backend
+  CI_IMAGE: fileshare-backend:${{ github.sha }}
 
 jobs:
   test:
@@ -28,6 +34,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -40,15 +48,61 @@ jobs:
         working-directory: backend
         run: ./gradlew test --no-daemon
 
-  deploy:
-    name: Push image and deploy ECS service
+  image:
+    name: Build and scan backend image
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build backend image
+        run: docker build -t "$CI_IMAGE" ./backend
+
+      - name: Scan backend image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.CI_IMAGE }}
+          scanners: vuln
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+
+      - name: Save verified image
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        run: docker save "$CI_IMAGE" -o backend-image.tar
+
+      - name: Upload verified image
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-image
+          path: backend-image.tar
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  deploy:
+    name: Push image and deploy ECS service
+    runs-on: ubuntu-latest
+    needs: image
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download verified image
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image
+
+      - name: Load verified image
+        run: docker load -i backend-image.tar
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -60,14 +114,14 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push backend image
+      - name: Push verified backend image
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker build -t "$IMAGE_URI" ./backend
+          docker tag "$CI_IMAGE" "$IMAGE_URI"
           docker push "$IMAGE_URI"
           echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 

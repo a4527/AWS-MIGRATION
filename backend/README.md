@@ -1,366 +1,597 @@
-# Backend
+백엔드는 Java 17 기반 Spring Boot 파일 공유 API다. 저장소 루트에서 `docker compose up --build`로 통합 실행하거나 이 디렉터리에서 `./gradlew bootRun`, `./gradlew test`를 사용한다.
 
-Spring Boot 기반 파일 공유 API 구현 영역입니다.
+실행 프로필·환경변수는 [배포](../docs/design/DEPLOYMENT.md), 요청/응답·오류 계약은 [API](../docs/design/API.md), 저장소 확인과 API 시나리오는 [검증](../docs/design/VALIDATION.md)을 따른다. 아래는 코드 이해를 위한 학습 해설이며 현행 계약이나 실행 성공 증빙을 대신하지 않는다.
 
-## 기술 기준
+이 문서는 현재 파일 공유 API 프로젝트를 예시로 Spring Boot의 기본 구조와 역할을 학습하기 위한 교보재다.
 
-- Java 17
-- Gradle 8.x
-- Spring Boot 3.3.x
-- Spring Web, Validation, Security, Actuator
-- Spring Data JPA, PostgreSQL, Redis, MinIO, Amazon S3
+## 1. 이 프로젝트를 Spring Boot 관점에서 보기
 
-## 패키지 구조
+이 프로젝트는 사용자가 회원가입과 로그인을 하고, 인증된 사용자가 파일을 업로드, 조회, 다운로드, 삭제할 수 있는 REST API 서버다.
 
-- `auth/`
-- `user/`
-- `file/`
-- `common/`
-- `config/`
-- `infra/`
-
-## 현재 구현 범위
-
-- 애플리케이션 진입점
-- 공통 응답 포맷
-- 공통 에러 코드
-- 전역 예외 처리
-- Stateless Spring Security 설정
-- JWT 발급/검증
-- 회원가입과 로그인
-- 현재 사용자 조회와 프로필 이름 수정
-- 관리자 전용 사용자 조회 접근 제어
-- 기본 개발 모드에서 사용하는 인메모리 사용자 저장소
-- `postgres` 프로필에서 사용하는 JPA 사용자 저장소
-- 파일 업로드, 목록 조회, 메타데이터 조회, 다운로드, 논리 삭제
-- 기본 개발 모드에서 사용하는 인메모리 파일 메타데이터 저장소
-- `postgres` 프로필에서 사용하는 JPA 파일 메타데이터 저장소
-- 기본 개발 모드에서 사용하는 로컬 파일 저장소
-- `minio` 프로필에서 사용하는 MinIO 파일 저장소
-- `redis` 프로필에서 사용하는 파일 단건 메타데이터 캐시
-- 파일 확장자와 크기 검증
-- `GET /api/health`
-
-## 로컬 실행
-
-저장소 로컬 Gradle 실행 스크립트를 사용한다.
-
-```bash
-cd backend
-./gradlew bootRun
-```
-
-기본 실행은 H2 datasource를 부트스트랩하지만, 도메인 저장소는 인메모리 구현을 사용하고 파일은 로컬 디스크에 저장한다.
-
-## Docker Compose 통합 실행
-
-Day 6 기준 온프레미스 통합 실행은 저장소 루트에서 Docker Compose를 사용한다.
-
-```bash
-docker compose up --build
-```
-
-Nginx가 외부 요청을 받으며 API는 `http://localhost:8080`에서 확인한다.
-
-```bash
-curl http://localhost:8080/api/health
-```
-
-Compose 실행 시 백엔드는 `postgres,redis,minio` 프로필을 사용한다. PostgreSQL, Redis, MinIO, JWT secret, 업로드 제한은 루트 `.env.example` 값을 기준으로 조정할 수 있다.
-
-PostgreSQL, Redis, MinIO를 사용하는 실행 예시:
-
-Compose를 사용하지 않고 백엔드를 Gradle로 직접 실행하려면 외부 저장소를 개별 컨테이너로 띄운다.
-
-```bash
-docker run --name fileshare-postgres \
-  -e POSTGRES_DB=fileshare \
-  -e POSTGRES_USER=fileshare \
-  -e POSTGRES_PASSWORD=fileshare \
-  -p 5432:5432 \
-  -d postgres:16
-
-docker run --name fileshare-redis \
-  -p 6379:6379 \
-  -d redis:7
-
-docker run --name fileshare-minio \
-  -e MINIO_ROOT_USER=minioadmin \
-  -e MINIO_ROOT_PASSWORD=minioadmin \
-  -p 9000:9000 \
-  -p 9001:9001 \
-  -d quay.io/minio/minio server /data --console-address ":9001"
-```
-
-이미 같은 이름의 컨테이너가 있으면 다시 시작한다.
-
-```bash
-docker start fileshare-postgres fileshare-redis fileshare-minio
-```
-
-백엔드를 외부 저장소 프로필로 실행한다.
-
-```bash
-cd backend
-
-export DB_URL='jdbc:postgresql://localhost:5432/fileshare'
-export DB_USERNAME='fileshare'
-export DB_PASSWORD='fileshare'
-export REDIS_HOST='localhost'
-export REDIS_PORT='6379'
-export MINIO_ENDPOINT='http://localhost:9000'
-export MINIO_ACCESS_KEY='minioadmin'
-export MINIO_SECRET_KEY='minioadmin'
-export MINIO_BUCKET='files'
-
-SPRING_PROFILES_ACTIVE=postgres,redis,minio ./gradlew bootRun
-```
-
-프로필별 역할:
-
-- `postgres`: 사용자와 파일 메타데이터를 JPA/PostgreSQL에 저장한다.
-- `redis`: 파일 단건 메타데이터를 `files:metadata:{fileId}` 키로 캐시한다.
-- `minio`: 실제 파일 바이너리를 MinIO 버킷에 저장한다.
-- `s3`: 실제 파일 바이너리를 Amazon S3 버킷에 저장한다.
-
-### PostgreSQL, Redis, MinIO 데이터 확인
-
-API로 회원가입, 로그인, 파일 업로드를 수행한 뒤 각 저장소에서 실제 데이터를 확인할 수 있다.
-
-PostgreSQL에는 사용자 정보와 파일 메타데이터가 저장된다.
-
-```bash
-docker exec -it fileshare-postgres psql -U fileshare -d fileshare
-```
-
-`psql` 접속 후 테이블과 데이터를 조회한다.
-
-```sql
-\dt
-
-SELECT id, email, name, role, created_at
-FROM users
-ORDER BY id;
-
-SELECT id,
-       owner_id,
-       original_file_name,
-       stored_file_name,
-       storage_path,
-       size,
-       status,
-       scan_status,
-       created_at
-FROM files
-ORDER BY id;
-```
-
-Redis에는 파일 단건 조회용 메타데이터 캐시가 저장된다. 업로드 또는 단건 조회 후 확인한다.
-
-```bash
-docker exec -it fileshare-redis redis-cli KEYS 'files:metadata:*'
-docker exec -it fileshare-redis redis-cli GET "files:metadata:${FILE_ID}"
-docker exec -it fileshare-redis redis-cli TTL "files:metadata:${FILE_ID}"
-```
-
-캐시 키는 `files:metadata:{fileId}` 형식이고 TTL은 300초다. 캐시는 조회 성능을 위한 보조 저장소이므로 키가 없더라도 PostgreSQL의 `files` 테이블 데이터가 원본이다.
-
-MinIO에는 실제 파일 바이너리가 저장된다. 브라우저에서 MinIO 콘솔에 접속한다.
+Spring Boot 애플리케이션은 다음 흐름으로 동작한다.
 
 ```text
-http://localhost:9001
+HTTP 요청
+-> Controller
+-> Service
+-> Repository 또는 Infra
+-> DB, Redis, MinIO, 로컬 파일 시스템
+-> 응답
 ```
 
-로그인 정보:
+예를 들어 파일 업로드 요청은 다음 순서로 처리된다.
 
 ```text
-Username: minioadmin
-Password: minioadmin
+POST /api/files
+-> FileController.upload()
+-> FileService.upload()
+-> FileStorage.store()
+-> FileMetadataRepository.save()
+-> FileMetadataCache.put()
+-> ApiResponse<FileResponse>
 ```
 
-`files` 버킷 안에서 PostgreSQL `files.storage_path` 값과 같은 object key를 찾으면 업로드된 실제 파일을 확인할 수 있다.
+각 계층은 역할이 다르다. Controller는 HTTP 요청과 응답을 담당하고, Service는 비즈니스 규칙을 처리하고, Repository는 데이터 저장소와 연결한다. Infra 계층은 MinIO, 로컬 파일 시스템 같은 외부 기술을 감싼다.
 
-## 테스트
+## 2. 애플리케이션 시작점
 
-```bash
-cd backend
-./gradlew test
-```
-
-## API 확인
-
-애플리케이션 실행 후 아래 명령을 사용한다.
-
-상태 확인:
-
-```bash
-curl http://localhost:8080/api/health
-```
-
-회원가입:
-
-```bash
-curl -X POST http://localhost:8080/api/auth/signup \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user@example.com","password":"Password123!","name":"홍길동"}'
-```
-
-로그인:
-
-```bash
-curl -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user@example.com","password":"Password123!"}'
-```
-
-로그인 응답의 `data.accessToken` 값을 환경변수로 저장한다.
-
-```bash
-ACCESS_TOKEN='<login-response-access-token>'
-```
-
-`jq`가 설치되어 있다면 로그인과 토큰 저장을 한 번에 처리할 수 있다.
-
-```bash
-ACCESS_TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user@example.com","password":"Password123!"}' \
-  | jq -r '.data.accessToken')
-```
-
-현재 로그인 사용자 조회:
-
-```bash
-curl http://localhost:8080/api/users/me \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-현재 로그인 사용자 이름 수정:
-
-```bash
-curl -X PATCH http://localhost:8080/api/users/me \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"홍길동2"}'
-```
-
-특정 사용자 조회:
-
-```bash
-curl http://localhost:8080/api/users/1 \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-Day 3 기준 `GET /api/users/{id}`는 `ADMIN` 역할만 접근할 수 있다. 일반 `USER` 토큰으로 요청하면 `AUTH_ACCESS_DENIED`가 반환된다.
-
-### 파일 업로드, 다운로드, 삭제 확인
-
-기본 개발 모드에서는 파일 메타데이터가 서버 메모리에 저장되고, 실제 파일은 로컬 디스크에 저장된다. `postgres,minio` 프로필을 사용하면 메타데이터는 PostgreSQL에, 실제 파일은 MinIO에 저장된다.
-
-기본 저장 위치:
+파일:
 
 ```text
-backend/build/local-storage
+backend/src/main/java/com/example/fileshare/FileShareApiApplication.java
 ```
 
-기본 개발 모드에서는 서버를 재시작하면 메모리에 있던 메타데이터는 사라진다. 로컬 파일이 디스크에 남아 있어도 API로는 조회할 수 없으므로, 업로드부터 다운로드까지 같은 실행 세션에서 확인한다. `postgres` 프로필을 사용하면 사용자 정보와 파일 메타데이터는 재시작 후에도 DB에 남는다.
+Spring Boot 애플리케이션의 시작점이다. 일반적으로 다음 형태를 가진다.
 
-예시 파일을 만든다.
+```java
+@SpringBootApplication
+public class FileShareApiApplication {
 
-```bash
-printf 'hello file api\n' > sample.txt
-```
-
-파일을 업로드한다.
-
-```bash
-curl -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.txt" \
-  -F "description=sample file"
-```
-
-응답 예시:
-
-```json
-{
-  "success": true,
-  "data": {
-    "fileId": 100,
-    "originalFileName": "sample.txt",
-    "storedFileName": "5f2f7e0a-8d3b-48df-9e8f-04af2d71d8f4.txt",
-    "size": 15,
-    "mimeType": "text/plain",
-    "status": "available",
-    "scanStatus": "CLEAN",
-    "ownerId": 1,
-    "description": "sample file",
-    "createdAt": "2026-07-02T00:00:00Z",
-    "updatedAt": "2026-07-02T00:00:00Z"
-  },
-  "message": "File uploaded"
+    public static void main(String[] args) {
+        SpringApplication.run(FileShareApiApplication.class, args);
+    }
 }
 ```
 
-`jq`가 설치되어 있다면 업로드하면서 `fileId`를 환경변수에 저장할 수 있다.
+`@SpringBootApplication`은 Spring Boot 설정의 출발점이다. 이 어노테이션을 기준으로 하위 패키지의 `@RestController`, `@Service`, `@Repository`, `@Component`, `@Configuration` 등을 찾아 Spring Bean으로 등록한다.
 
-```bash
-FILE_ID=$(curl -s -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.txt" \
-  -F "description=sample file" \
-  | jq -r '.data.fileId')
-```
-
-파일 목록을 조회한다.
-
-```bash
-curl http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-파일 메타데이터를 단건 조회한다.
-
-```bash
-curl http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-파일을 다운로드한다.
-
-```bash
-curl -L http://localhost:8080/api/files/${FILE_ID}/download \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -o downloaded-sample.txt
-```
-
-다운로드한 파일 내용을 확인한다.
-
-```bash
-cat downloaded-sample.txt
-```
-
-예상 출력:
+이 프로젝트의 기준 패키지는 다음이다.
 
 ```text
-hello file api
+com.example.fileshare
 ```
 
-파일을 삭제한다. Day 4 기준 삭제는 실제 로컬 파일을 지우는 것이 아니라 메타데이터 상태를 `deleted`로 바꾸는 논리 삭제다.
+따라서 다음 패키지들이 자동 스캔 대상이 된다.
+
+```text
+com.example.fileshare.auth
+com.example.fileshare.user
+com.example.fileshare.file
+com.example.fileshare.common
+com.example.fileshare.config
+com.example.fileshare.infra
+```
+
+## 3. 패키지 구조와 책임
+
+현재 백엔드 패키지는 기능과 책임 기준으로 나뉘어 있다.
+
+```text
+auth/    인증, 회원가입, 로그인
+user/    사용자 조회와 수정
+file/    파일 업로드, 조회, 다운로드, 삭제
+common/  공통 응답, 공통 에러, 예외 처리
+config/  보안 설정, JWT 필터
+infra/   외부 저장소 연동
+```
+
+각 기능 패키지 안에서는 다시 계층을 나눈다.
+
+```text
+api/          HTTP API 계층
+application/  서비스 계층
+domain/       도메인 모델
+repository/   저장소 인터페이스와 구현체
+```
+
+예를 들어 파일 기능은 다음처럼 구성되어 있다.
+
+```text
+file/api/FileController.java
+file/application/FileService.java
+file/domain/FileMetadata.java
+file/repository/FileMetadataRepository.java
+file/repository/InMemoryFileMetadataRepository.java
+file/repository/jpa/JpaFileMetadataRepositoryAdapter.java
+```
+
+이 구조의 목적은 HTTP, 비즈니스 규칙, 저장소 구현을 분리하는 것이다.
+
+## 4. Controller: HTTP 요청과 응답 담당
+
+Controller는 클라이언트가 호출하는 API endpoint를 정의한다.
+
+예시 파일:
+
+```text
+backend/src/main/java/com/example/fileshare/auth/api/AuthController.java
+backend/src/main/java/com/example/fileshare/file/api/FileController.java
+backend/src/main/java/com/example/fileshare/user/api/UserController.java
+```
+
+`AuthController`는 `/api/auth` 하위 API를 담당한다.
+
+```java
+@RestController
+@RequestMapping("/api/auth")
+public class AuthController {
+
+    private final AuthService authService;
+
+    public AuthController(AuthService authService) {
+        this.authService = authService;
+    }
+
+    @PostMapping("/signup")
+    public ApiResponse<UserResponse> signup(@Valid @RequestBody SignupRequest request) {
+        return ApiResponse.ok(UserResponse.from(authService.signup(request)), "User created");
+    }
+}
+```
+
+중요한 포인트:
+
+- `@RestController`: JSON 응답을 반환하는 웹 컨트롤러로 등록한다.
+- `@RequestMapping("/api/auth")`: 이 컨트롤러의 공통 URL prefix를 지정한다.
+- `@PostMapping("/signup")`: `POST /api/auth/signup` 요청을 처리한다.
+- `@RequestBody`: HTTP body의 JSON을 Java 객체로 바꾼다.
+- `@Valid`: 요청 DTO의 validation 규칙을 검사한다.
+
+Controller는 직접 DB에 접근하지 않는다. 요청을 검증 가능한 객체로 받고, Service를 호출하고, 응답 DTO로 변환한다.
+
+## 5. DTO: 요청과 응답 모델
+
+DTO는 API 요청과 응답의 모양을 정의한다.
+
+예시 파일:
+
+```text
+auth/api/SignupRequest.java
+auth/api/LoginRequest.java
+auth/api/LoginResponse.java
+user/api/UserResponse.java
+file/api/FileResponse.java
+```
+
+DTO를 쓰는 이유는 API 계약과 내부 도메인 모델을 분리하기 위해서다.
+
+예를 들어 `User` 도메인에는 `passwordHash`가 있지만, 응답 DTO인 `UserResponse`에는 비밀번호 해시를 포함하지 않는다. 이렇게 하면 내부 데이터 구조가 그대로 외부에 노출되는 것을 막을 수 있다.
+
+## 6. Service: 비즈니스 규칙 담당
+
+Service는 애플리케이션의 핵심 흐름을 처리한다.
+
+예시 파일:
+
+```text
+auth/application/AuthService.java
+user/application/UserService.java
+file/application/FileService.java
+```
+
+`AuthService.signup()`은 회원가입 규칙을 처리한다.
+
+```java
+public User signup(SignupRequest request) {
+    if (userRepository.existsByEmail(request.email())) {
+        throw new BusinessException(ErrorCode.AUTH_DUPLICATED_EMAIL);
+    }
+
+    Instant now = Instant.now();
+    User user = new User(
+            null,
+            request.email(),
+            passwordEncoder.encode(request.password()),
+            request.name(),
+            UserRole.USER,
+            now,
+            now
+    );
+    return userRepository.save(user);
+}
+```
+
+이 메서드는 다음 일을 한다.
+
+```text
+이메일 중복 확인
+-> 비밀번호 해시 처리
+-> 기본 권한 USER 부여
+-> 생성 시각 설정
+-> 사용자 저장
+```
+
+`FileService.upload()`는 파일 업로드 규칙을 처리한다.
+
+```text
+파일 크기와 확장자 검증
+-> 파일 저장소에 실제 파일 저장
+-> 파일 메타데이터 생성
+-> DB에 메타데이터 저장
+-> Redis 캐시에 메타데이터 저장
+```
+
+Service의 핵심 원칙은 "기능의 의미 있는 규칙은 Service에 둔다"는 것이다. Controller는 HTTP 처리에 집중하고, Repository는 저장소 접근에 집중한다.
+
+## 7. Domain: 핵심 데이터 모델
+
+Domain은 애플리케이션이 다루는 핵심 개념을 표현한다.
+
+예시 파일:
+
+```text
+user/domain/User.java
+user/domain/UserRole.java
+file/domain/FileMetadata.java
+file/domain/FileStatus.java
+file/domain/ScanStatus.java
+```
+
+`User`는 사용자 자체를 표현하고, `FileMetadata`는 업로드된 파일의 메타데이터를 표현한다.
+
+이 프로젝트에서는 JPA Entity와 Domain을 분리했다.
+
+```text
+Domain: 서비스 계층이 사용하는 핵심 모델
+JPA Entity: DB 테이블과 매핑되는 영속성 모델
+```
+
+분리한 이유는 DB 구조가 바뀌어도 서비스 계층의 모델을 최대한 안정적으로 유지하기 위해서다.
+
+## 8. Repository: 저장소 접근 추상화
+
+Repository는 데이터를 저장하고 조회하는 역할을 한다.
+
+예시 인터페이스:
+
+```text
+user/repository/UserRepository.java
+file/repository/FileMetadataRepository.java
+```
+
+`FileMetadataRepository`는 다음 기능을 정의한다.
+
+```java
+public interface FileMetadataRepository {
+
+    FileMetadata save(FileMetadata fileMetadata);
+
+    Optional<FileMetadata> findById(Long id);
+
+    List<FileMetadata> findVisibleByOwnerId(Long ownerId);
+}
+```
+
+Service는 이 인터페이스에만 의존한다. 실제 구현은 실행 프로필에 따라 바뀐다.
+
+```text
+기본 실행
+-> InMemoryFileMetadataRepository
+
+postgres 프로필
+-> JpaFileMetadataRepositoryAdapter
+```
+
+이 구조 덕분에 `FileService`는 저장소가 메모리인지 PostgreSQL인지 몰라도 된다.
+
+## 9. JPA: Java 객체와 DB 테이블 연결
+
+JPA는 Java 객체를 DB 테이블에 저장하고 조회할 수 있게 해주는 기술이다.
+
+예시 파일:
+
+```text
+user/repository/jpa/UserEntity.java
+user/repository/jpa/SpringDataUserJpaRepository.java
+user/repository/jpa/JpaUserRepositoryAdapter.java
+file/repository/jpa/FileMetadataEntity.java
+file/repository/jpa/SpringDataFileMetadataJpaRepository.java
+file/repository/jpa/JpaFileMetadataRepositoryAdapter.java
+```
+
+`UserEntity`는 `users` 테이블과 매핑된다.
+
+```java
+@Entity
+@Table(name = "users")
+public class UserEntity {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(nullable = false, unique = true, length = 255)
+    private String email;
+}
+```
+
+중요한 포인트:
+
+- `@Entity`: JPA가 관리하는 DB 매핑 객체다.
+- `@Table(name = "users")`: DB 테이블 이름을 지정한다.
+- `@Id`: 기본 키다.
+- `@GeneratedValue`: DB가 ID를 자동 생성한다.
+- `@Column`: 컬럼 제약을 지정한다.
+
+Spring Data JPA Repository는 기본 CRUD를 자동으로 제공한다.
+
+```java
+public interface SpringDataUserJpaRepository extends JpaRepository<UserEntity, Long> {
+
+    Optional<UserEntity> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+}
+```
+
+`findByEmail`처럼 메서드 이름을 규칙에 맞게 작성하면 Spring Data JPA가 쿼리를 만들어준다.
+
+## 10. Adapter: 도메인 Repository와 JPA 연결
+
+이 프로젝트에서 Service는 `UserRepository`에 의존한다. 그런데 Spring Data JPA는 `SpringDataUserJpaRepository`를 제공한다. 둘을 연결하는 클래스가 Adapter다.
+
+예시:
+
+```java
+@Repository
+@Profile("postgres")
+public class JpaUserRepositoryAdapter implements UserRepository {
+
+    private final SpringDataUserJpaRepository jpaRepository;
+
+    @Override
+    public User save(User user) {
+        return jpaRepository.save(UserEntity.from(user)).toDomain();
+    }
+}
+```
+
+Adapter의 역할:
+
+```text
+Domain User
+-> UserEntity
+-> JPA save
+-> UserEntity
+-> Domain User
+```
+
+이 구조는 "서비스 계층이 JPA를 직접 알지 않게" 만든다.
+
+## 11. Profile: 실행 환경별 스위치
+
+Spring Profile은 실행 모드에 따라 설정과 Bean을 바꾸는 기능이다.
+
+기본 실행:
 
 ```bash
-curl -X DELETE http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+./gradlew bootRun
 ```
 
-삭제 후 같은 파일을 조회하면 `RESOURCE_NOT_FOUND`가 반환된다.
+이 경우 인메모리 저장소와 로컬 파일 저장소를 사용한다.
+
+외부 저장소 실행:
 
 ```bash
-curl http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+SPRING_PROFILES_ACTIVE=postgres,redis,minio ./gradlew bootRun
 ```
 
-응답 예시:
+이 경우 다음 Bean과 설정이 활성화된다.
+
+```text
+postgres -> JPA/PostgreSQL 저장소
+redis    -> Redis 캐시
+minio    -> MinIO 파일 저장소
+```
+
+프로필별 설정 파일:
+
+```text
+application-postgres.yml
+application-redis.yml
+application-minio.yml
+```
+
+프로필별 Bean 예시:
+
+```java
+@Profile("postgres")
+public class JpaUserRepositoryAdapter implements UserRepository {
+}
+```
+
+```java
+@Profile("!redis")
+public class NoOpFileMetadataCache implements FileMetadataCache {
+}
+```
+
+`!redis`는 Redis 프로필이 꺼져 있을 때 활성화된다는 뜻이다.
+
+## 12. Redis: 캐시 저장소
+
+Redis는 이 프로젝트에서 원본 저장소가 아니라 캐시로 사용된다.
+
+예시 파일:
+
+```text
+file/application/FileMetadataCache.java
+file/application/RedisFileMetadataCache.java
+file/application/NoOpFileMetadataCache.java
+```
+
+캐시 인터페이스:
+
+```java
+public interface FileMetadataCache {
+
+    Optional<FileMetadata> findById(Long id);
+
+    void put(FileMetadata fileMetadata);
+
+    void evict(Long id);
+}
+```
+
+Redis 구현체는 다음 키 형식으로 파일 메타데이터를 저장한다.
+
+```text
+files:metadata:{fileId}
+```
+
+TTL은 5분이다.
+
+```java
+private static final Duration TTL = Duration.ofMinutes(5);
+private static final String KEY_PREFIX = "files:metadata:";
+```
+
+파일 단건 조회 흐름:
+
+```text
+Redis 캐시 조회
+-> 캐시에 있으면 반환
+-> 캐시에 없으면 PostgreSQL 조회
+-> 조회 결과를 Redis에 다시 저장
+```
+
+Redis가 꺼져 있을 때는 `NoOpFileMetadataCache`가 사용된다. 이 구현체는 아무것도 저장하지 않고 항상 cache miss를 반환한다.
+
+## 13. MinIO: 실제 파일 저장소
+
+MinIO는 이 프로젝트에서 실제 파일 바이너리를 저장한다.
+
+예시 파일:
+
+```text
+infra/storage/FileStorage.java
+infra/storage/LocalFileStorage.java
+infra/storage/MinioFileStorage.java
+```
+
+`FileStorage` 인터페이스:
+
+```java
+public interface FileStorage {
+
+    StoredFile store(String originalFileName, InputStream inputStream) throws IOException;
+
+    StorageObject load(String storagePath) throws IOException;
+}
+```
+
+기본 실행에서는 `LocalFileStorage`가 사용되고, `minio` 프로필에서는 `MinioFileStorage`가 사용된다.
+
+파일 업로드 시 저장 위치:
+
+```text
+실제 파일 내용
+-> MinIO bucket
+
+파일명, 크기, ownerId, storagePath
+-> PostgreSQL files 테이블
+```
+
+중요한 연결 고리는 `files.storage_path`다. 이 값이 MinIO object key와 같다.
+
+```text
+PostgreSQL files.storage_path
+-> MinIO object key
+-> 실제 파일 다운로드
+```
+
+## 14. Security: 인증과 인가
+
+보안 설정 파일:
+
+```text
+config/security/SecurityConfig.java
+config/security/JwtAuthenticationFilter.java
+config/security/JwtTokenProvider.java
+config/security/AuthUserPrincipal.java
+```
+
+`SecurityConfig`는 어떤 API를 공개하고 어떤 API에 인증을 요구할지 정한다.
+
+```java
+.authorizeHttpRequests(auth -> auth
+        .requestMatchers("/api/health", "/actuator/health", "/api/auth/signup", "/api/auth/login", "/api/auth/refresh").permitAll()
+        .anyRequest().authenticated()
+)
+```
+
+의미:
+
+```text
+/api/health, /api/auth/signup, /api/auth/login
+-> 인증 없이 접근 가능
+
+그 외 API
+-> JWT 인증 필요
+```
+
+JWT 인증 흐름:
+
+```text
+로그인 성공
+-> JwtTokenProvider가 access token 발급
+-> 클라이언트가 Authorization: Bearer {token} 전송
+-> JwtAuthenticationFilter가 토큰 검증
+-> AuthUserPrincipal을 SecurityContext에 저장
+-> Controller에서 @AuthenticationPrincipal로 현재 사용자 사용
+```
+
+파일 API는 현재 사용자를 이렇게 받는다.
+
+```java
+public ApiResponse<FileResponse> upload(
+        @AuthenticationPrincipal AuthUserPrincipal principal,
+        @RequestParam MultipartFile file
+)
+```
+
+## 15. Exception Handling: 에러 응답 통일
+
+예외 처리 파일:
+
+```text
+common/exception/BusinessException.java
+common/exception/GlobalExceptionHandler.java
+common/error/ErrorCode.java
+common/api/ApiResponse.java
+```
+
+Service에서 문제가 생기면 `BusinessException`을 던진다.
+
+```java
+throw new BusinessException(ErrorCode.AUTH_DUPLICATED_EMAIL);
+```
+
+`GlobalExceptionHandler`가 이 예외를 잡아 공통 응답 형태로 변환한다.
+
+```java
+@ExceptionHandler(BusinessException.class)
+public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception) {
+    ErrorCode errorCode = exception.errorCode();
+    return ResponseEntity
+            .status(errorCode.status())
+            .body(ApiResponse.fail(errorCode.name(), exception.getMessage()));
+}
+```
+
+이 구조의 장점은 API 에러 응답이 일관된다는 것이다.
+
+예시:
 
 ```json
 {
@@ -370,22 +601,296 @@ curl http://localhost:8080/api/files/${FILE_ID} \
 }
 ```
 
-허용되지 않는 확장자를 업로드하면 `FILE_INVALID_TYPE`이 반환된다.
+## 16. Configuration: 설정과 Bean 등록
 
-```bash
-printf 'not allowed\n' > sample.exe
+Configuration은 Spring Bean을 직접 등록하거나 프레임워크 설정을 구성할 때 사용한다.
 
-curl -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.exe"
+예시:
+
+```text
+config/security/SecurityConfig.java
 ```
 
-다른 일반 사용자로 로그인하면 이 파일의 메타데이터 조회와 다운로드는 `AUTH_ACCESS_DENIED`로 차단된다. 사용자별 로컬 폴더는 만들지 않고, 소유자 구분은 메타데이터의 `ownerId`로 처리한다.
+비밀번호 암호화 객체는 `@Bean`으로 등록한다.
 
-인증 없이 보호 API 호출:
-
-```bash
-curl http://localhost:8080/api/users/me
+```java
+@Bean
+public PasswordEncoder passwordEncoder() {
+    return new BCryptPasswordEncoder();
+}
 ```
 
-Day 5 기준 refresh token 발급, logout 토큰 무효화, 공유 권한 테이블, 업로드 로그 테이블은 아직 구현 전이다.
+이렇게 등록된 `PasswordEncoder`는 `AuthService` 생성자에 자동 주입된다.
+
+```java
+public AuthService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtTokenProvider jwtTokenProvider) {
+    this.userRepository = userRepository;
+    this.passwordEncoder = passwordEncoder;
+    this.jwtTokenProvider = jwtTokenProvider;
+}
+```
+
+## 17. Dependency Injection: 의존성 주입
+
+Spring은 필요한 객체를 직접 생성해서 연결해준다. 이것을 의존성 주입이라고 한다.
+
+예시:
+
+```java
+public FileService(
+        FileMetadataRepository fileMetadataRepository,
+        FileStorage fileStorage,
+        FileMetadataCache fileMetadataCache
+) {
+    this.fileMetadataRepository = fileMetadataRepository;
+    this.fileStorage = fileStorage;
+    this.fileMetadataCache = fileMetadataCache;
+}
+```
+
+`FileService`는 구현체를 직접 만들지 않는다.
+
+```text
+new JpaFileMetadataRepositoryAdapter()
+new MinioFileStorage()
+new RedisFileMetadataCache()
+```
+
+이런 코드를 Service 안에 쓰지 않는다. Spring이 현재 프로필과 설정에 맞는 Bean을 찾아 넣어준다.
+
+이 방식의 장점:
+
+- Service 테스트가 쉬워진다.
+- 저장소 구현을 바꿔도 Service 코드를 유지할 수 있다.
+- 로컬 개발, 테스트, 운영 환경을 프로필로 나눌 수 있다.
+
+## 18. API 요청 처리 예시
+
+회원가입 흐름:
+
+```text
+POST /api/auth/signup
+-> AuthController.signup()
+-> AuthService.signup()
+-> UserRepository.existsByEmail()
+-> PasswordEncoder.encode()
+-> UserRepository.save()
+-> UserResponse.from()
+-> ApiResponse.ok()
+```
+
+로그인 흐름:
+
+```text
+POST /api/auth/login
+-> AuthController.login()
+-> AuthService.login()
+-> UserRepository.findByEmail()
+-> PasswordEncoder.matches()
+-> JwtTokenProvider.generate()
+-> LoginResponse
+```
+
+파일 업로드 흐름:
+
+```text
+POST /api/files
+-> JwtAuthenticationFilter
+-> FileController.upload()
+-> FileService.upload()
+-> 확장자와 크기 검증
+-> FileStorage.store()
+-> FileMetadataRepository.save()
+-> FileMetadataCache.put()
+-> FileResponse
+```
+
+파일 단건 조회 흐름:
+
+```text
+GET /api/files/{id}
+-> JwtAuthenticationFilter
+-> FileController.get()
+-> FileService.get()
+-> FileMetadataCache.findById()
+-> FileMetadataRepository.findById()
+-> 소유자 또는 ADMIN 권한 확인
+-> FileResponse
+```
+
+파일 다운로드 흐름:
+
+```text
+GET /api/files/{id}/download
+-> FileService.download()
+-> FileMetadata 조회
+-> 파일 상태 확인
+-> FileStorage.load()
+-> ResponseEntity<Resource>
+```
+
+파일 삭제 흐름:
+
+```text
+DELETE /api/files/{id}
+-> FileService.delete()
+-> FileMetadata 조회
+-> 권한 확인
+-> status를 DELETED로 변경
+-> FileMetadataRepository.save()
+-> FileMetadataCache.evict()
+```
+
+현재 삭제는 실제 파일을 지우는 물리 삭제가 아니라 메타데이터 상태를 바꾸는 논리 삭제다.
+
+## 19. 테스트: 기능이 실제로 동작하는지 검증
+
+예시 파일:
+
+```text
+backend/src/test/java/com/example/fileshare/auth/AuthApiIntegrationTests.java
+backend/src/test/java/com/example/fileshare/file/FileApiIntegrationTests.java
+backend/src/test/java/com/example/fileshare/persistence/PostgresProfileIntegrationTests.java
+```
+
+`PostgresProfileIntegrationTests`는 `postgres` 프로필에서 JPA 저장소가 동작하는지 확인한다.
+
+```java
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:fileshare-postgres-profile;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1"
+})
+@AutoConfigureMockMvc
+@ActiveProfiles("postgres")
+class PostgresProfileIntegrationTests {
+}
+```
+
+중요한 포인트:
+
+- `@SpringBootTest`: Spring Boot 애플리케이션을 테스트 환경에서 띄운다.
+- `@AutoConfigureMockMvc`: 실제 서버 포트 없이 HTTP 요청을 테스트한다.
+- `@ActiveProfiles("postgres")`: 테스트에서 `postgres` 프로필을 켠다.
+- H2 PostgreSQL compatibility mode: 실제 PostgreSQL 없이 JPA 매핑을 검증한다.
+
+테스트 실행:
+
+```bash
+cd backend
+./gradlew test
+```
+
+## 20. 현재 프로젝트로 Spring Boot를 공부하는 순서
+
+처음부터 모든 파일을 동시에 보지 말고 요청 흐름 기준으로 읽는 것이 좋다.
+
+1. 애플리케이션 시작점 보기
+
+```text
+FileShareApiApplication.java
+```
+
+2. 인증 API 흐름 보기
+
+```text
+AuthController.java
+AuthService.java
+UserRepository.java
+InMemoryUserRepository.java
+JpaUserRepositoryAdapter.java
+```
+
+3. 파일 API 흐름 보기
+
+```text
+FileController.java
+FileService.java
+FileStorage.java
+LocalFileStorage.java
+MinioFileStorage.java
+FileMetadataRepository.java
+```
+
+4. 공통 응답과 예외 처리 보기
+
+```text
+ApiResponse.java
+BusinessException.java
+ErrorCode.java
+GlobalExceptionHandler.java
+```
+
+5. 보안 흐름 보기
+
+```text
+SecurityConfig.java
+JwtAuthenticationFilter.java
+JwtTokenProvider.java
+AuthUserPrincipal.java
+```
+
+6. 프로필과 외부 저장소 보기
+
+```text
+application.yml
+application-postgres.yml
+application-redis.yml
+application-minio.yml
+```
+
+## 21. 핵심 개념 요약
+
+Spring Boot 핵심 개념을 이 프로젝트에 매핑하면 다음과 같다.
+
+```text
+Controller
+-> HTTP endpoint 정의
+-> AuthController, FileController, UserController
+
+Service
+-> 비즈니스 규칙 처리
+-> AuthService, FileService, UserService
+
+Repository
+-> 데이터 저장과 조회 추상화
+-> UserRepository, FileMetadataRepository
+
+JPA Entity
+-> DB 테이블과 Java 객체 매핑
+-> UserEntity, FileMetadataEntity
+
+Spring Data JPA Repository
+-> CRUD와 쿼리 메서드 제공
+-> SpringDataUserJpaRepository, SpringDataFileMetadataJpaRepository
+
+Profile
+-> 실행 환경별 Bean과 설정 선택
+-> postgres, redis, minio
+
+Security
+-> 인증, 인가, JWT 검증
+-> SecurityConfig, JwtAuthenticationFilter
+
+Exception Handler
+-> 에러 응답 통일
+-> GlobalExceptionHandler
+
+Infra
+-> 외부 기술 연동
+-> MinioFileStorage, LocalFileStorage, RedisFileMetadataCache
+```
+
+이 프로젝트의 좋은 학습 포인트는 같은 Service 코드가 프로필에 따라 다른 저장소 구현을 사용할 수 있다는 점이다.
+
+```text
+기본 모드
+-> 인메모리 Repository
+-> 로컬 파일 저장소
+-> NoOp 캐시
+
+외부 저장소 모드
+-> PostgreSQL JPA Repository
+-> MinIO 파일 저장소
+-> Redis 캐시
+```
+
+즉 Spring Boot는 Controller, Service, Repository를 정해진 역할로 나누고, Spring Container가 필요한 객체를 연결해주며, Profile과 Configuration으로 실행 환경을 전환할 수 있게 해주는 프레임워크라고 볼 수 있다.

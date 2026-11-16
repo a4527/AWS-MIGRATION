@@ -1,5 +1,3 @@
-# Terraform
-
 AWS 인프라를 코드로 정의하는 영역입니다.
 
 ## 구조
@@ -19,6 +17,7 @@ terraform/
     ├── ecr/
     ├── ecs/
     ├── elasticache/
+    ├── file-processor/
     ├── github-actions/
     ├── iam/
     ├── s3/
@@ -41,12 +40,17 @@ terraform/
 - Aurora PostgreSQL: database subnet group, encrypted Serverless v2 cluster
 - ElastiCache Redis: database subnet group, encrypted replication group
 
-## 예정 구성
+<a id="예정-구성"></a>
 
-- Route53 hosted zone record
-- ACM certificate
-- CloudWatch log group, metric alarm
-- Lambda 후처리 실행 역할과 S3 event notification
+## 추가 구현 구성
+
+아래 항목은 Terraform 코드에 정의되어 있다. 실제 리소스 생성·동작 검증 상태는 [진행 요약](../docs/PROGRESS.md)을 따른다.
+
+- Route53 record·ACM certificate: 도메인 변수 설정 시 활성화되는 선택형 HTTPS
+- CloudWatch log group, metric alarm, ECS Service Auto Scaling
+- Lambda 후처리 실행 역할과 S3 event notification (`modules/file-processor`)
+
+상세 구조·운영 한계는 [인프라 해설](../docs/design/AWS.md), 실행 순서는 [AWS 배포 런북](../docs/design/DEPLOYMENT.md)을 참조한다.
 
 ## 개발 환경 실행
 

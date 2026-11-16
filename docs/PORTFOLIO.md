@@ -1,5 +1,3 @@
-# 08. Portfolio
-
 ## 프로젝트 한 줄 소개
 
 Spring Boot 기반 파일 공유 API를 Docker Compose 온프레미스 환경에서 먼저 완성하고, 동일한 API/데이터 계약을 유지한 채 AWS ECS Fargate, Aurora PostgreSQL, ElastiCache Redis, S3, Lambda 기반 구조로 전환한 마이그레이션 프로젝트다.
@@ -146,11 +144,11 @@ ECS Backend
 
 ## 관련 문서
 
-- `docs/02_ARCHITECTURE.md`: 아키텍처 상세
-- `docs/04_API_SPEC.md`: API 명세
-- `docs/05_MIGRATION.md`: 마이그레이션 전략
-- `docs/06_DEPLOYMENT.md`: 배포 방식
-- `docs/11_ONPREM_MANUAL_TEST.md`: 온프레미스 검증
-- `docs/12_TERRAFORM_AWS_INFRA_SUMMARY.md`: Terraform 인프라 설명
-- `docs/13_AWS_DEPLOYMENT_RUNBOOK.md`: AWS 배포 런북
-- `docs/14_FINAL_VALIDATION.md`: 최종 검증 절차
+- `docs/DESIGN.md`: 아키텍처 상세
+- `docs/design/API.md`: API 명세
+- `docs/design/MIGRATION.md`: 마이그레이션 전략
+- `docs/design/DEPLOYMENT.md`: 배포 방식
+- `docs/design/VALIDATION.md`: 온프레미스 검증
+- `docs/design/AWS.md`: Terraform 인프라 설명
+- `docs/design/DEPLOYMENT.md`: AWS 배포 런북
+- `docs/design/VALIDATION.md`: 최종 검증 절차
