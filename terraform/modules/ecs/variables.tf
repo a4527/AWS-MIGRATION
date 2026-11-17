@@ -50,7 +50,7 @@ variable "memory" {
 }
 
 variable "desired_count" {
-  description = "Desired ECS service task count."
+  description = "Initial ECS service task count; Application Auto Scaling manages it after creation."
   type        = number
 }
 

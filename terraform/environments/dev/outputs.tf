@@ -97,3 +97,8 @@ output "file_processor_log_group_name" {
   description = "CloudWatch log group for the file processor Lambda."
   value       = module.file_processor.log_group_name
 }
+
+output "ecs_task_definition_template_arn" {
+  description = "Terraform task definition template for initial deployment or explicit configuration rollout."
+  value       = module.ecs.task_definition_template_arn
+}

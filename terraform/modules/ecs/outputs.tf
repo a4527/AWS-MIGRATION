@@ -13,6 +13,11 @@ output "service_name" {
   value       = aws_ecs_service.application.name
 }
 
+output "task_definition_template_arn" {
+  description = "Terraform-managed task definition template ARN; not necessarily the revision deployed by CD."
+  value       = aws_ecs_task_definition.application.arn
+}
+
 output "service_arn" {
   description = "ECS service ARN."
   value       = aws_ecs_service.application.id

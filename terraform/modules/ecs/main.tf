@@ -223,6 +223,12 @@ resource "aws_ecs_service" "application" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  lifecycle {
+    # CD owns the deployed revision; Application Auto Scaling owns task count.
+    # These configured values still apply when creating the service.
+    ignore_changes = [task_definition, desired_count]
+  }
+
   network_configuration {
     assign_public_ip = false
     security_groups  = [var.application_security_group_id]

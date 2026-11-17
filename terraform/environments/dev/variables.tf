@@ -59,7 +59,7 @@ variable "force_destroy_buckets" {
 }
 
 variable "ecs_backend_image_tag" {
-  description = "ECR image tag deployed to the ECS backend service."
+  description = "ECR image tag in the Terraform task definition template; CD manages the deployed service revision."
   type        = string
   default     = "latest"
 }
@@ -83,7 +83,7 @@ variable "ecs_task_memory" {
 }
 
 variable "ecs_desired_count" {
-  description = "Desired ECS task count for the backend service."
+  description = "Initial ECS task count; Application Auto Scaling manages it after service creation."
   type        = number
   default     = 2
 }

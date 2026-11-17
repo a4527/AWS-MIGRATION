@@ -76,13 +76,15 @@ terraform plan
 - `database_subnets`: Aurora/ElastiCache용 subnet CIDR 목록
 - `file_bucket_name`: 업로드 파일 저장 S3 bucket 이름
 - `force_destroy_buckets`: 개발 bucket 삭제 허용 여부
-- `ecs_backend_image_tag`: ECS 서비스가 배포할 backend image tag
+- `ecs_backend_image_tag`: 최초 배포·설정 변경용 Terraform task definition 템플릿의 image tag
 - `ecs_container_port`: backend 컨테이너 포트
 - `ecs_task_cpu`: Fargate task CPU units
 - `ecs_task_memory`: Fargate task memory
-- `ecs_desired_count`: ECS service desired task count
+- `ecs_desired_count`: ECS service 생성 시 task 수. 생성 후에는 Auto Scaling이 관리
 - `app_jwt_secret`: AWS 실행 환경의 JWT secret
 - `github_repository`: GitHub Actions OIDC assume을 허용할 repository
 - `github_branch`: GitHub Actions OIDC assume을 허용할 branch
 - `aurora_master_password`: Aurora master password. 실제 값은 `terraform.tfvars` 또는 secret store에서 주입한다.
 - `redis_node_type`: ElastiCache Redis node type
+
+ECS service의 배포 revision은 CD, 실행 task 수는 Auto Scaling이 관리한다. Terraform의 템플릿 변경은 기존 service에 자동 배포되지 않는다. 최초 배포·설정 변경·재생성 절차와 검증은 [관리 책임과 배포 순서](../docs/design/DEPLOYMENT.md#ecs-관리-책임과-배포-순서-iac-02)를 따른다.
