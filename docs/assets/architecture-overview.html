@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>File Share API 아키텍처</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: 단일 칼럼 기술 문서, 섹션마다 다이어그램 → 표/설명 순서 */
+:root {
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --ink: #18212c;
+  --muted: #5b6877;
+  --line: #cfd8e2;
+  --accent: #0a6a86;
+  --accent-soft: #e2f0f4;
+  --warn: #a8501b;
+  --warn-soft: #fbeee4;
+  --z-pub: #e7eefb;
+  --z-app: #e3f3ef;
+  --z-db: #fbf1df;
+  --z-net: #eef1f5;
+  --node: #ffffff;
+  --node-line: #9fb0c2;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161e27; --ink: #e2e8ef; --muted: #96a3b2; --line: #2f3b48;
+    --accent: #5bbcd9; --accent-soft: #15303a; --warn: #f0a46c; --warn-soft: #3a2518;
+    --z-pub: #18243a; --z-app: #142c28; --z-db: #2e2616; --z-net: #1a222c;
+    --node: #1d2732; --node-line: #4b5d70; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161e27; --ink: #e2e8ef; --muted: #96a3b2; --line: #2f3b48;
+  --accent: #5bbcd9; --accent-soft: #15303a; --warn: #f0a46c; --warn-soft: #3a2518;
+  --z-pub: #18243a; --z-app: #142c28; --z-db: #2e2616; --z-net: #1a222c;
+  --node: #1d2732; --node-line: #4b5d70; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.7;
+}
+.wrap {
+  max-width: 1040px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+  display: flex; flex-direction: column; gap: 56px;
+}
+h1, h2, h3 { text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; font-weight: 700; }
+h3 { font-size: 1.05rem; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+p code, li code, td code { background: var(--accent-soft); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+.eyebrow { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.muted { color: var(--muted); }
+
+header { display: flex; flex-direction: column; gap: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-family: var(--font-mono); font-size: 0.78rem; padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); }
+nav { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.9rem; border-top: 1px solid var(--line); padding-top: 14px; }
+nav a { color: var(--accent); text-decoration: none; }
+nav a:hover, nav a:focus-visible { text-decoration: underline; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+section { display: flex; flex-direction: column; gap: 18px; scroll-margin-top: 16px; }
+.section-head { display: flex; flex-direction: column; gap: 6px; }
+
+.figure { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.figure svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.figure figcaption { font-size: 0.82rem; color: var(--muted); padding: 10px 16px; border-top: 1px solid var(--line); min-width: 760px; }
+figure { margin: 0; }
+
+/* svg */
+.n { fill: var(--node); stroke: var(--node-line); stroke-width: 1.2; }
+.n-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+.nt { fill: var(--ink); font: 600 14px var(--font-body); text-anchor: middle; }
+.ns { fill: var(--muted); font: 400 11.5px var(--font-mono); text-anchor: middle; }
+.zl { fill: var(--muted); font: 600 11px var(--font-body); letter-spacing: 0.06em; text-anchor: end; }
+.zl-start { text-anchor: start; }
+.al { fill: var(--muted); font: 500 11px var(--font-mono); }
+.al-mid { text-anchor: middle; }
+.al-end { text-anchor: end; }
+.edge { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.edge-dash { stroke-dasharray: 5 4; }
+.edge-accent { stroke: var(--accent); }
+.ah { fill: var(--muted); }
+.ah-accent { fill: var(--accent); }
+.z-vpc { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 7 5; }
+.z-pub { fill: var(--z-pub); }
+.z-app { fill: var(--z-app); }
+.z-db { fill: var(--z-db); }
+.z-net { fill: var(--z-net); stroke: var(--line); stroke-dasharray: 6 4; }
+.z-bar { fill: var(--z-net); stroke: var(--line); }
+.pt { fill: var(--ink); font: 700 15px var(--font-body); }
+.pt-tag { fill: var(--accent); font: 600 12px var(--font-body); }
+.rl { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+
+/* tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 0.75rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--bg); }
+tr:last-child td { border-bottom: 0; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 760px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+
+pre.tree {
+  margin: 0; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  font-family: var(--font-mono); font-size: 0.82rem; line-height: 1.65; overflow-x: auto; color: var(--ink);
+}
+.tree .c { color: var(--muted); }
+.tree .p { color: var(--accent); font-weight: 500; }
+.tree .tag { color: var(--warn); }
+
+.note { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.note.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); background: var(--warn-soft); }
+.note.warn h3 { color: var(--warn); }
+.note p { font-size: 0.92rem; }
+
+.modules { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 0.92rem; }
+.mod { font-family: var(--font-mono); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--node-line); background: var(--surface); }
+.mod.accent { border-color: var(--accent); background: var(--accent-soft); }
+.arrow { color: var(--muted); font-family: var(--font-mono); }
+
+ol.flow { list-style: none; margin: 0; padding: 0; counter-reset: s; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+ol.flow li { counter-increment: s; display: grid; grid-template-columns: 2.2rem 9.5rem minmax(0, 1fr); gap: 12px; padding: 11px 16px; border-bottom: 1px solid var(--line); align-items: baseline; }
+ol.flow li:last-child { border-bottom: 0; }
+ol.flow li::before { content: counter(s); font-family: var(--font-mono); font-size: 0.8rem; color: var(--accent); font-weight: 500; }
+ol.flow .who { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); }
+ol.flow li.aws { background: var(--z-db); }
+@media (max-width: 600px) {
+  ol.flow li { grid-template-columns: 2rem minmax(0, 1fr); }
+  ol.flow .what { grid-column: 2; }
+}
+
+.tiers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 860px) { .tiers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 480px) { .tiers { grid-template-columns: minmax(0, 1fr); } }
+.tier { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.tier-label { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding-bottom: 6px; border-bottom: 2px solid var(--line); }
+.tf { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.tf b { font-family: var(--font-mono); font-size: 0.86rem; font-weight: 500; }
+.tf span { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+
+.pipeline { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; }
+.stage { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stage b { font-size: 0.9rem; }
+.stage span { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
+.stage.gate { border-style: dashed; border-color: var(--accent); }
+
+footer { font-size: 0.82rem; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">AWS-MIGRATION · 아키텍처 레퍼런스</div>
+  <h1>File Share API 아키텍처</h1>
+  <p>파일 공유 API를 온프레미스(Docker Compose)에서 AWS(ECS Fargate)로 옮기는 프로젝트입니다. 원칙은 <strong>기능은 그대로 두고 인프라만 교체</strong>입니다. 애플리케이션은 도메인별 패키지 안을 계층으로 나누고, 저장소·DB·캐시는 인터페이스(포트) 뒤에 숨겨 Spring 프로필로 구현체를 바꿉니다.</p>
+  <div class="chips">
+    <span class="chip">Java 17</span><span class="chip">Spring Boot 3.3.7</span><span class="chip">PostgreSQL 16 / Aurora</span>
+    <span class="chip">Redis 7 / ElastiCache</span><span class="chip">MinIO / S3</span><span class="chip">Terraform</span><span class="chip">GitHub Actions</span>
+  </div>
+  <nav aria-label="목차">
+    <a href="#system">시스템 구성</a><a href="#packages">패키지·계층</a><a href="#deps">의존성</a>
+    <a href="#profiles">프로필 조합</a><a href="#flow">업로드 흐름</a><a href="#terraform">Terraform 모듈</a><a href="#cicd">CI/CD</a>
+  </nav>
+</header>
+
+<!-- 1. SYSTEM -->
+<section id="system">
+  <div class="section-head">
+    <div class="eyebrow">1 · 시스템 구성</div>
+    <h2>온프레미스와 AWS</h2>
+    <p class="muted">같은 컨테이너 이미지가 두 환경에서 돌아갑니다. 바뀌는 것은 환경변수와 활성 프로필뿐입니다.</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 900 250" role="img" aria-label="온프레미스 Docker Compose 구성도">
+      <defs>
+        <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <rect class="z-net" x="170" y="14" width="716" height="222" rx="10"/>
+      <text class="zl zl-start" x="186" y="36">DOCKER COMPOSE NETWORK</text>
+
+      <rect class="n" x="20" y="100" width="120" height="50" rx="8"/>
+      <text class="nt" x="80" y="130">Client</text>
+
+      <rect class="n" x="200" y="100" width="140" height="50" rx="8"/>
+      <text class="nt" x="270" y="121">nginx 1.27</text><text class="ns" x="270" y="139">reverse proxy</text>
+
+      <rect class="n-accent" x="390" y="88" width="210" height="74" rx="8"/>
+      <text class="nt" x="495" y="113">Spring Boot API</text><text class="ns" x="495" y="131">:8080</text><text class="ns" x="495" y="148">postgres,redis,minio</text>
+
+      <rect class="n" x="670" y="40" width="200" height="50" rx="8"/>
+      <text class="nt" x="770" y="61">PostgreSQL 16</text><text class="ns" x="770" y="79">users · files</text>
+      <rect class="n" x="670" y="100" width="200" height="50" rx="8"/>
+      <text class="nt" x="770" y="121">Redis 7</text><text class="ns" x="770" y="139">files:metadata:{id} 300s</text>
+      <rect class="n" x="670" y="160" width="200" height="50" rx="8"/>
+      <text class="nt" x="770" y="181">MinIO</text><text class="ns" x="770" y="199">bucket: files</text>
+
+      <path class="edge" d="M140 125 H198" marker-end="url(#a1)"/><text class="al al-mid" x="160" y="117">:8080</text>
+      <path class="edge" d="M340 125 H388" marker-end="url(#a1)"/><text class="al al-mid" x="364" y="117">/api/*</text>
+      <path class="edge" d="M600 112 H630 V65 H668" marker-end="url(#a1)"/>
+      <path class="edge" d="M600 125 H668" marker-end="url(#a1)"/>
+      <path class="edge" d="M600 138 H630 V185 H668" marker-end="url(#a1)"/>
+    </svg>
+    <figcaption>온프레미스: nginx만 외부(8080)에 노출합니다. 로컬 검증 편의를 위해 5432·6379·9000·9001도 열려 있고, 데이터는 볼륨 3개에 저장합니다.</figcaption>
+  </figure>
+
+  <figure class="figure">
+    <svg viewBox="0 0 900 480" role="img" aria-label="AWS 구성도">
+      <defs>
+        <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
+        <marker id="a2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah-accent" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+
+      <rect class="z-vpc" x="186" y="14" width="464" height="452" rx="12"/>
+      <text class="zl zl-start" x="200" y="33">VPC 10.20.0.0/16 · 2 AZ</text>
+      <rect class="z-pub" x="198" y="44" width="440" height="108" rx="8"/>
+      <text class="zl" x="630" y="60">PUBLIC SUBNET</text>
+      <rect class="z-app" x="198" y="166" width="440" height="112" rx="8"/>
+      <text class="zl" x="630" y="182">PRIVATE SUBNET</text>
+      <rect class="z-db" x="198" y="292" width="440" height="160" rx="8"/>
+      <text class="zl" x="630" y="308">DATABASE SUBNET · 인터넷 라우트 없음</text>
+
+      <rect class="n" x="20" y="80" width="130" height="48" rx="8"/>
+      <text class="nt" x="85" y="109">Client</text>
+      <rect class="n" x="20" y="180" width="130" height="56" rx="8"/>
+      <text class="nt" x="85" y="203">Route53</text><text class="ns" x="85" y="221">ACM 인증서</text>
+
+      <rect class="n" x="210" y="72" width="180" height="52" rx="8"/>
+      <text class="nt" x="300" y="94">ALB</text><text class="ns" x="300" y="112">HTTPS :443</text>
+      <rect class="n" x="420" y="72" width="200" height="52" rx="8"/>
+      <text class="nt" x="520" y="94">NAT Gateway ×1</text><text class="ns" x="520" y="112">dev 비용 절감</text>
+
+      <rect class="n-accent" x="210" y="196" width="410" height="62" rx="8"/>
+      <text class="nt" x="415" y="221">ECS Fargate · Spring Boot</text>
+      <text class="ns" x="415" y="240">postgres,redis,s3 · Auto Scaling(CPU/메모리)</text>
+
+      <rect class="n" x="210" y="330" width="190" height="60" rx="8"/>
+      <text class="nt" x="305" y="355">Aurora PostgreSQL</text><text class="ns" x="305" y="373">Serverless v2 · 암호화</text>
+      <rect class="n" x="430" y="330" width="190" height="60" rx="8"/>
+      <text class="nt" x="525" y="355">ElastiCache Redis</text><text class="ns" x="525" y="373">저장·전송 암호화</text>
+
+      <rect class="n" x="690" y="14" width="190" height="52" rx="8"/>
+      <text class="nt" x="785" y="35">GitHub Actions</text><text class="ns" x="785" y="53">OIDC role</text>
+      <rect class="n" x="690" y="96" width="190" height="52" rx="8"/>
+      <text class="nt" x="785" y="117">ECR</text><text class="ns" x="785" y="135">backend · 최근 20개</text>
+      <rect class="n" x="690" y="200" width="190" height="56" rx="8"/>
+      <text class="nt" x="785" y="223">S3</text><text class="ns" x="785" y="241">files/ · versioning</text>
+      <rect class="n" x="690" y="312" width="190" height="56" rx="8"/>
+      <text class="nt" x="785" y="335">Lambda</text><text class="ns" x="785" y="353">file-processor</text>
+      <rect class="n" x="690" y="404" width="190" height="48" rx="8"/>
+      <text class="nt" x="785" y="425">CloudWatch</text><text class="ns" x="785" y="441">Logs · 알람</text>
+
+      <path class="edge" d="M85 128 V178" marker-end="url(#a2)"/>
+      <path class="edge" d="M150 208 H168 V98 H208" marker-end="url(#a2)"/>
+      <path class="edge edge-accent" d="M300 124 V194" marker-end="url(#a2a)"/><text class="al" x="306" y="146">:8080</text>
+      <path class="edge" d="M305 258 V328" marker-end="url(#a2)"/><text class="al" x="311" y="290">:5432</text>
+      <path class="edge" d="M525 258 V328" marker-end="url(#a2)"/><text class="al" x="531" y="290">:6379</text>
+      <path class="edge edge-dash" d="M560 196 V126" marker-end="url(#a2)"/><text class="al" x="566" y="146">egress</text>
+      <path class="edge edge-accent" d="M620 228 H688" marker-end="url(#a2a)"/><text class="al al-mid" x="666" y="220">task role</text>
+      <path class="edge" d="M785 66 V94" marker-end="url(#a2)"/><text class="al" x="791" y="85">push</text>
+      <path class="edge" d="M690 122 H664 V212 H622" marker-end="url(#a2)"/><text class="al" x="670" y="170">pull</text>
+      <path class="edge" d="M785 256 V310" marker-end="url(#a2)"/><text class="al" x="791" y="287">ObjectCreated</text>
+      <path class="edge edge-dash" d="M745 312 V258" marker-end="url(#a2)"/><text class="al al-end" x="739" y="287">tag</text>
+      <path class="edge" d="M785 368 V402" marker-end="url(#a2)"/>
+      <path class="edge edge-dash" d="M620 246 H660 V428 H688" marker-end="url(#a2)"/><text class="al" x="666" y="345">logs</text>
+    </svg>
+    <figcaption>AWS: 보안 그룹 체인은 ALB → app :8080 → Aurora :5432 / Redis :6379 입니다. Lambda는 확장자 검사 결과를 S3 object tag로만 남기고, DB 상태 동기화와 실제 백신 엔진은 후속 범위입니다.</figcaption>
+  </figure>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>역할</th><th>온프레미스</th><th>AWS</th><th>애플리케이션에서 바꾸는 방법</th></tr></thead>
+      <tbody>
+        <tr><td>진입점</td><td>nginx</td><td>Route53 + ACM + ALB</td><td>없음</td></tr>
+        <tr><td>실행 환경</td><td>Compose 컨테이너</td><td>ECS Fargate</td><td>같은 이미지 사용</td></tr>
+        <tr><td>DB</td><td>PostgreSQL</td><td>Aurora PostgreSQL</td><td><code>DB_URL</code></td></tr>
+        <tr><td>캐시</td><td>Redis</td><td>ElastiCache</td><td><code>REDIS_HOST</code>, <code>REDIS_SSL_ENABLED</code></td></tr>
+        <tr><td>파일 저장</td><td>MinIO</td><td>S3</td><td>프로필 <code>minio</code> → <code>s3</code></td></tr>
+        <tr><td>후처리</td><td>없음</td><td>Lambda (S3 이벤트)</td><td>애플리케이션과 분리</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 2. PACKAGES -->
+<section id="packages">
+  <div class="section-head">
+    <div class="eyebrow">2 · 패키지와 계층</div>
+    <h2>도메인별 패키지, 안쪽은 계층</h2>
+    <p class="muted">최상위는 <code>auth</code>·<code>user</code>·<code>file</code> 도메인과 공통 패키지로 나뉘고, 각 도메인 안은 api → application → domain / repository 계층입니다.</p>
+  </div>
+
+<pre class="tree"><span class="p">com.example.fileshare</span>
+├── FileShareApiApplication
+├── <span class="p">auth/</span>                       <span class="c">회원가입·로그인, 자체 도메인 없이 user 사용</span>
+│   ├── api/          AuthController, LoginRequest/Response, SignupRequest
+│   └── application/  AuthService, LoginResult
+├── <span class="p">user/</span>
+│   ├── api/          UserController, UserResponse, UpdateMeRequest
+│   ├── application/  UserService
+│   ├── domain/       User, UserRole
+│   └── repository/   UserRepository <span class="c">(포트)</span>
+│       ├── InMemoryUserRepository           <span class="tag">@Profile("!postgres")</span>
+│       └── jpa/      JpaUserRepositoryAdapter <span class="tag">@Profile("postgres")</span>, UserEntity
+├── <span class="p">file/</span>
+│   ├── api/          FileController, FileResponse, FileDeleteResponse
+│   │                 AdminStorageController <span class="c">(관리자 고아 객체 점검)</span>
+│   ├── application/  FileUploadService <span class="c">(업로드·보상·멱등성)</span>, UploadRecorder <span class="c">(트랜잭션)</span>
+│   │                 FileService <span class="c">(조회·다운로드·삭제)</span>, StorageReconciliationService
+│   │                 UploadPolicy, UploadRequestCleanupJob <span class="c">(만료 키 정리)</span>
+│   │                 FileMetadataCache <span class="c">(포트)</span>
+│   │                 ├── RedisFileMetadataCache <span class="tag">@Profile("redis")</span> <span class="c">버전 비교·재시도</span>
+│   │                 └── NoOpFileMetadataCache  <span class="tag">@Profile("!redis")</span>
+│   ├── domain/       FileMetadata, FileStatus, ScanStatus, UploadRequest, UploadRequestStatus
+│   └── repository/   FileMetadataRepository, UploadRequestRepository <span class="c">(포트)</span>
+│       ├── InMemory*Repository              <span class="tag">@Profile("!postgres")</span>
+│       └── jpa/      Jpa*RepositoryAdapter  <span class="tag">@Profile("postgres")</span>, FileMetadataEntity, UploadRequestEntity
+├── <span class="p">infra/storage/</span>               FileStorage <span class="c">(포트: allocate·write·load·delete·list)</span>, StoredFile, StorageObject, StorageEntry
+│   ├── LocalFileStorage   <span class="tag">app.storage.type=local (기본)</span>
+│   ├── MinioFileStorage   <span class="tag">app.storage.type=minio</span>
+│   └── S3FileStorage      <span class="tag">app.storage.type=s3</span>
+├── <span class="p">config/security/</span>             SecurityConfig, JwtAuthenticationFilter, JwtTokenProvider,
+│                                AuthUserPrincipal, RestAuthenticationEntryPoint, RestAccessDeniedHandler
+└── <span class="p">common/</span>                      api (ApiResponse, HealthController) · error (ErrorCode) · actor (Actor)
+                                 exception (BusinessException, GlobalExceptionHandler)</pre>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>계층</th><th>책임</th><th>예시</th></tr></thead>
+      <tbody>
+        <tr><td>api</td><td>HTTP 요청·응답 DTO, 컨트롤러</td><td><code>FileController</code></td></tr>
+        <tr><td>application</td><td>유스케이스, 입력 검증, 권한 판단, 저장·캐시 순서</td><td><code>FileService.upload()</code></td></tr>
+        <tr><td>domain</td><td>순수 모델과 상태 전이. JPA를 모름</td><td><code>FileMetadata.markDeleted()</code>, <code>FileStatus</code></td></tr>
+        <tr><td>repository</td><td>영속성 포트와 어댑터. 도메인 ↔ Entity 변환은 <code>jpa/</code> 안에서만</td><td><code>JpaFileMetadataRepositoryAdapter</code></td></tr>
+        <tr><td>infra</td><td>외부 시스템 어댑터 (MinIO·S3 SDK)</td><td><code>S3FileStorage</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-head">
+    <h3>도메인과 JPA Entity 분리</h3>
+    <p class="muted">이 프로젝트는 도메인 모델(<code>FileMetadata</code>)과 JPA Entity(<code>FileMetadataEntity</code>)를 별도 클래스로 둡니다. 아래 그림은 현재 방식과, 하나로 합쳤을 때의 흐름을 삭제(<code>markDeleted()</code>) 기준으로 비교합니다.</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 900 520" role="img" aria-label="도메인과 Entity 분리 방식과 통합 방식 비교">
+      <defs>
+        <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+
+      <rect class="z-net" x="10" y="10" width="880" height="240" rx="10"/>
+      <text class="pt" x="26" y="38">도메인과 Entity 분리</text>
+      <text class="pt-tag" x="190" y="38">현재 구현</text>
+
+      <rect class="rl" x="24" y="56" width="96" height="40" rx="6"/><text class="nt" x="72" y="81">조회</text>
+      <rect class="n-accent" x="140" y="56" width="130" height="40" rx="6"/><text class="nt" x="205" y="81">Service</text>
+      <rect class="n" x="310" y="56" width="160" height="40" rx="6"/><text class="nt" x="390" y="81">Repository 포트</text>
+      <rect class="n" x="510" y="56" width="180" height="40" rx="6"/><text class="nt" x="600" y="81">JPA 어댑터</text>
+      <rect class="n" x="730" y="56" width="150" height="40" rx="6"/><text class="nt" x="805" y="81">DB</text>
+      <path class="edge" d="M270 76 H308" marker-end="url(#a4)"/>
+      <path class="edge" d="M470 76 H508" marker-end="url(#a4)"/>
+      <path class="edge" d="M690 76 H728" marker-end="url(#a4)"/>
+      <path class="edge" d="M600 96 V126 H205 V98" marker-end="url(#a4)"/>
+      <text class="al al-mid" x="400" y="120">toDomain() → 도메인 객체 반환</text>
+
+      <rect class="rl" x="24" y="146" width="96" height="40" rx="6"/><text class="nt" x="72" y="171">규칙 적용</text>
+      <rect class="n-accent" x="140" y="146" width="130" height="40" rx="6"/><text class="nt" x="205" y="171">Service</text>
+      <rect class="n" x="410" y="146" width="200" height="40" rx="6"/><text class="nt" x="510" y="171">FileMetadata (도메인)</text>
+      <path class="edge" d="M270 166 H408" marker-end="url(#a4)"/>
+      <text class="al al-mid" x="339" y="158">markDeleted()</text>
+
+      <rect class="rl" x="24" y="196" width="96" height="40" rx="6"/><text class="nt" x="72" y="221">저장</text>
+      <rect class="n-accent" x="140" y="196" width="130" height="40" rx="6"/><text class="nt" x="205" y="221">Service</text>
+      <rect class="n" x="310" y="196" width="160" height="40" rx="6"/><text class="nt" x="390" y="221">Repository 포트</text>
+      <rect class="n" x="510" y="196" width="180" height="40" rx="6"/><text class="nt" x="600" y="221">JPA 어댑터</text>
+      <rect class="n" x="730" y="196" width="150" height="40" rx="6"/><text class="nt" x="805" y="221">DB</text>
+      <path class="edge" d="M270 216 H308" marker-end="url(#a4)"/><text class="al al-mid" x="289" y="208">save()</text>
+      <path class="edge" d="M470 216 H508" marker-end="url(#a4)"/>
+      <path class="edge" d="M690 216 H728" marker-end="url(#a4)"/><text class="al al-mid" x="709" y="208">Entity</text>
+
+      <rect class="z-net" x="10" y="270" width="880" height="240" rx="10"/>
+      <text class="pt" x="26" y="298">도메인과 Entity 통합</text>
+      <text class="pt-tag" x="190" y="298">비교안</text>
+
+      <rect class="rl" x="24" y="316" width="96" height="40" rx="6"/><text class="nt" x="72" y="341">조회</text>
+      <rect class="n-accent" x="140" y="316" width="130" height="40" rx="6"/><text class="nt" x="205" y="341">Service</text>
+      <rect class="n" x="310" y="316" width="200" height="40" rx="6"/><text class="nt" x="410" y="341">JPA Repository</text>
+      <rect class="n" x="730" y="316" width="150" height="40" rx="6"/><text class="nt" x="805" y="341">DB</text>
+      <path class="edge" d="M270 336 H308" marker-end="url(#a4)"/>
+      <path class="edge" d="M510 336 H728" marker-end="url(#a4)"/>
+      <path class="edge" d="M410 356 V386 H205 V358" marker-end="url(#a4)"/>
+      <text class="al al-mid" x="310" y="380">Entity 반환</text>
+
+      <rect class="rl" x="24" y="406" width="96" height="40" rx="6"/><text class="nt" x="72" y="431">규칙 적용</text>
+      <rect class="n-accent" x="140" y="406" width="130" height="40" rx="6"/><text class="nt" x="205" y="431">Service</text>
+      <rect class="n" x="410" y="406" width="200" height="40" rx="6"/><text class="nt" x="510" y="431">JPA Entity</text>
+      <path class="edge" d="M270 426 H408" marker-end="url(#a4)"/>
+      <text class="al al-mid" x="339" y="418">markDeleted()</text>
+
+      <rect class="rl" x="24" y="456" width="96" height="40" rx="6"/><text class="nt" x="72" y="481">저장</text>
+      <rect class="n" x="140" y="456" width="180" height="40" rx="6"/><text class="nt" x="230" y="481">JPA 변경 감지</text>
+      <rect class="n" x="410" y="456" width="150" height="40" rx="6"/><text class="nt" x="485" y="481">DB</text>
+      <path class="edge" d="M320 476 H408" marker-end="url(#a4)"/><text class="al al-mid" x="364" y="468">flush</text>
+    </svg>
+    <figcaption>분리 방식에서는 상태를 바꾼 뒤 Service가 <code>save()</code>를 명시적으로 호출해야 저장됩니다. 통합 방식에서는 트랜잭션 안에서 JPA 변경 감지가 자동으로 반영합니다.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="note">
+      <h3>분리 (현재 구현)</h3>
+      <p>도메인이 JPA 애노테이션·지연 로딩을 모르기 때문에 같은 Service가 <code>InMemory</code> 저장소(기본·테스트)와 JPA 저장소(<code>postgres</code> 프로필)를 그대로 씁니다.</p>
+      <p class="muted">대가: <code>FileMetadataEntity.from()</code>·<code>toDomain()</code> 매핑 코드가 필요하고, 변경 감지 대신 <code>save()</code>를 호출해야 합니다.</p>
+    </div>
+    <div class="note">
+      <h3>통합 (비교안)</h3>
+      <p>클래스와 매핑 코드가 줄고, 트랜잭션 안의 상태 변경이 변경 감지로 자동 저장됩니다.</p>
+      <p class="muted">대가: 도메인 규칙이 JPA 생명주기에 묶여 프로필별 저장소 교체와 순수 단위 테스트가 어려워집니다.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3. DEPS -->
+<section id="deps">
+  <div class="section-head">
+    <div class="eyebrow">3 · 의존성</div>
+    <h2>계층 간 의존 방향</h2>
+    <p class="muted">실제 import 기준입니다. 실선은 사용, 점선은 구현(implements)입니다. 어댑터는 Spring 프로필이나 <code>app.storage.type</code> 속성으로 하나만 빈으로 등록됩니다.</p>
+  </div>
+
+  <figure class="figure">
+    <svg viewBox="0 0 720 470" role="img" aria-label="계층 의존성 다이어그램">
+      <defs>
+        <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0 0 L10 5 L0 10 z"/></marker>
+      </defs>
+      <rect class="n" x="30" y="40" width="190" height="56" rx="8"/>
+      <text class="nt" x="125" y="64">api</text><text class="ns" x="125" y="82">Controller · DTO</text>
+      <rect class="n-accent" x="250" y="40" width="190" height="56" rx="8"/>
+      <text class="nt" x="345" y="64">application</text><text class="ns" x="345" y="82">Service · 검증 · 권한</text>
+      <rect class="n" x="500" y="40" width="190" height="56" rx="8"/>
+      <text class="nt" x="595" y="64">domain</text><text class="ns" x="595" y="82">FileMetadata · User</text>
+
+      <rect class="n" x="30" y="170" width="190" height="56" rx="8"/>
+      <text class="nt" x="125" y="194">infra.storage</text><text class="ns" x="125" y="212">FileStorage 포트</text>
+      <rect class="n" x="250" y="170" width="190" height="56" rx="8"/>
+      <text class="nt" x="345" y="194">FileMetadataCache</text><text class="ns" x="345" y="212">캐시 포트</text>
+      <rect class="n" x="500" y="170" width="190" height="56" rx="8"/>
+      <text class="nt" x="595" y="194">repository</text><text class="ns" x="595" y="212">*Repository 포트</text>
+
+      <rect class="n" x="30" y="300" width="190" height="56" rx="8"/>
+      <text class="nt" x="125" y="324">Local · MinIO · S3</text><text class="ns" x="125" y="342">app.storage.type</text>
+      <rect class="n" x="250" y="300" width="190" height="56" rx="8"/>
+      <text class="nt" x="345" y="324">Redis · NoOp</text><text class="ns" x="345" y="342">@Profile("redis")</text>
+      <rect class="n" x="500" y="300" width="190" height="56" rx="8"/>
+      <text class="nt" x="595" y="324">jpa · InMemory</text><text class="ns" x="595" y="342">@Profile("postgres")</text>
+
+      <path class="edge" d="M220 68 H248" marker-end="url(#a3)"/>
+      <path class="edge" d="M440 68 H498" marker-end="url(#a3)"/>
+      <path class="edge" d="M300 96 V140 H125 V168" marker-end="url(#a3)"/>
+      <path class="edge" d="M345 96 V168" marker-end="url(#a3)"/>
+      <path class="edge" d="M390 96 V140 H560 V168" marker-end="url(#a3)"/>
+      <path class="edge" d="M640 170 V98" marker-end="url(#a3)"/><text class="al" x="646" y="140">도메인 타입</text>
+
+      <path class="edge edge-dash" d="M125 300 V228" marker-end="url(#a3)"/><text class="al" x="131" y="268">implements</text>
+      <path class="edge edge-dash" d="M345 300 V228" marker-end="url(#a3)"/><text class="al" x="351" y="268">implements</text>
+      <path class="edge edge-dash" d="M595 300 V228" marker-end="url(#a3)"/><text class="al" x="601" y="268">implements</text>
+
+      <rect class="z-bar" x="30" y="396" width="660" height="52" rx="8"/>
+      <text class="nt" x="360" y="418">common</text>
+      <text class="ns" x="360" y="436">ApiResponse · ErrorCode · BusinessException · Actor: 여러 계층에서 참조</text>
+    </svg>
+    <figcaption>FileService는 FileStorage·FileMetadataCache·FileMetadataRepository 세 포트에만 의존하므로, 인프라를 바꿔도 서비스 코드는 그대로입니다.</figcaption>
+  </figure>
+
+  <div class="grid2">
+    <div class="note">
+      <h3>도메인 모듈 간 관계</h3>
+      <div class="modules">
+        <span class="mod">auth</span><span class="arrow">──▶</span><span class="mod accent">user</span>
+        <span class="mod">file</span><span class="arrow">─ ✕ ─</span><span class="mod accent">user</span>
+      </div>
+      <p><code>AuthService</code>는 <code>user.domain</code>과 <code>user.repository</code>를 직접 씁니다. <code>file</code>은 <code>user</code>를 import하지 않고 <code>ownerId</code>(Long)로만 소유자를 구분합니다.</p>
+    </div>
+    <div class="note">
+      <h3>외부 라이브러리</h3>
+      <p>Spring 스타터: web, validation, security, data-jpa, data-redis, cache, actuator</p>
+      <p>스토리지 SDK: <code>io.minio:minio:8.5.14</code>, <code>awssdk:s3:2.31.78</code></p>
+      <p>런타임 드라이버: <code>postgresql</code>, <code>h2</code> · 테스트: spring-boot-starter-test, spring-security-test</p>
+    </div>
+    <div class="note">
+      <h3>서비스는 API DTO를 모름 (LAYER-01)</h3>
+      <p><code>AuthService</code>는 회원가입 값을 받고 <code>LoginResult</code>(사용자·토큰·만료)를 반환합니다. <code>LoginResponse</code>·<code>UserResponse</code> 변환은 <code>AuthController</code>가 합니다.</p>
+    </div>
+    <div class="note">
+      <h3>서비스는 보안 타입을 모름 (LAYER-02)</h3>
+      <p>컨트롤러가 <code>AuthUserPrincipal.toActor()</code>로 <code>common.actor.Actor</code>(사용자 ID·관리자 여부)를 만들어 <code>FileService</code>에 넘깁니다.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4. PROFILES -->
+<section id="profiles">
+  <div class="section-head">
+    <div class="eyebrow">4 · 프로필 조합</div>
+    <h2>실행 환경별 빈 선택</h2>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>환경</th><th>프로필 / 속성</th><th>Repository</th><th>Cache</th><th>Storage</th><th>DB</th></tr></thead>
+      <tbody>
+        <tr><td>테스트·기본</td><td><code>(없음)</code></td><td>InMemory</td><td>NoOp, <code>cache.type=simple</code></td><td>Local</td><td>H2 (PostgreSQL 모드)</td></tr>
+        <tr><td>Compose</td><td><code>postgres,redis,minio</code></td><td>JPA</td><td>Redis, TTL 300s</td><td>MinIO</td><td>PostgreSQL 16</td></tr>
+        <tr><td>ECS</td><td><code>postgres,redis,s3</code></td><td>JPA</td><td>Redis (TLS)</td><td>S3, <code>files/</code> prefix</td><td>Aurora PostgreSQL</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 5. FLOW -->
+<section id="flow">
+  <div class="section-head">
+    <div class="eyebrow">5 · 요청 흐름</div>
+    <h2>파일 업로드</h2>
+    <p class="muted">메타데이터 조회는 캐시 → DB 순서로 찾은 뒤 소유자 또는 ADMIN인지 확인합니다. 다운로드와 삭제는 캐시를 쓰지 않고 DB 상태로 판단합니다. 삭제는 상태를 <code>DELETED</code>로 바꾸는 논리 삭제이고, 캐시에는 삭제 상태를 덮어씁니다. Redis가 응답하지 않으면 DB로 우회합니다.</p>
+  </div>
+  <ol class="flow">
+    <li><span class="who">Client</span><span class="what"><code>multipart/form-data</code>로 <code>POST /api/files</code> 요청. 재전송 대비 <code>Idempotency-Key</code> 헤더 선택</span></li>
+    <li><span class="who">nginx / ALB</span><span class="what">백엔드로 프록시. nginx는 <code>client_max_body_size 10m</code></span></li>
+    <li><span class="who">JwtAuthFilter</span><span class="what">Bearer 토큰 검증 후 <code>AuthUserPrincipal</code> 설정. 컨트롤러가 <code>Actor</code>로 변환</span></li>
+    <li><span class="who">FileUploadService</span><span class="what">크기 10MB 이하, 확장자 허용목록(pdf, png, jpg, jpeg, txt, csv) 검증</span></li>
+    <li><span class="who">FileStorage</span><span class="what">객체 위치(UUID)를 먼저 확정. 쓰기 응답이 유실돼도 정리할 수 있게 함</span></li>
+    <li><span class="who">upload_requests</span><span class="what">키가 있으면 <code>IN_PROGRESS</code> 기록. 완료된 같은 요청은 첫 결과 재전송, 진행 중 409, 다른 요청 422</span></li>
+    <li><span class="who">FileStorage</span><span class="what">크기를 아는 스트림으로 MinIO 또는 S3에 저장 (전체 버퍼링 없음)</span></li>
+    <li><span class="who">UploadRecorder</span><span class="what"><code>files</code> 저장과 요청 완료를 한 트랜잭션으로. 실패 시 재시도, 끝내 실패하면 기록 없음 확인 후 객체 삭제, 확인 불가면 객체 보존</span></li>
+    <li><span class="who">Cache</span><span class="what">Redis <code>files:metadata:{id}</code>에 버전 비교 쓰기. 실패해도 업로드는 성공</span></li>
+    <li><span class="who">Controller</span><span class="what"><code>ApiResponse</code>로 감싸서 응답</span></li>
+    <li class="aws"><span class="who">Lambda (AWS)</span><span class="what">S3 ObjectCreated 이벤트로 실행되어 확장자 가드와 메타데이터 태그를 기록하고 CloudWatch에 로그를 남김</span></li>
+  </ol>
+</section>
+
+<!-- 6. TERRAFORM -->
+<section id="terraform">
+  <div class="section-head">
+    <div class="eyebrow">6 · 인프라 코드</div>
+    <h2>Terraform 모듈 의존성</h2>
+    <p class="muted"><code>terraform/environments/dev/main.tf</code>가 아래 모듈을 조립합니다. 각 카드의 회색 줄은 입력으로 받는 다른 모듈의 출력입니다.</p>
+  </div>
+  <div class="tiers">
+    <div class="tier">
+      <div class="tier-label">기반</div>
+      <div class="tf"><b>vpc</b><span>public · private · database 서브넷 ×2 AZ, NAT 1개</span></div>
+      <div class="tf"><b>ecr</b><span>backend 리포지토리, scan on push</span></div>
+      <div class="tf"><b>s3</b><span>public block, SSE-S3, versioning</span></div>
+    </div>
+    <div class="tier">
+      <div class="tier-label">보안·데이터</div>
+      <div class="tf"><b>security_groups</b><span>← vpc</span></div>
+      <div class="tf"><b>iam</b><span>← s3 (files/ prefix 정책)</span></div>
+      <div class="tf"><b>aurora</b><span>← vpc, security_groups</span></div>
+      <div class="tf"><b>elasticache</b><span>← vpc, security_groups</span></div>
+    </div>
+    <div class="tier">
+      <div class="tier-label">실행</div>
+      <div class="tf"><b>ecs</b><span>← vpc, security_groups, ecr, s3, iam, aurora, elasticache, ACM</span></div>
+      <div class="tf"><b>file_processor</b><span>← s3 (Lambda + 알림 + 로그·알람)</span></div>
+    </div>
+    <div class="tier">
+      <div class="tier-label">진입·배포</div>
+      <div class="tf"><b>ACM + Route53</b><span>domain 설정 시 생성, A 레코드 → ecs.alb_dns_name</span></div>
+      <div class="tf"><b>github_actions</b><span>← ecr, ecs (OIDC 배포 role)</span></div>
+    </div>
+  </div>
+  <div class="note">
+    <h3>배포 책임 분리 (IAC-02)</h3>
+    <p>Terraform은 인프라와 task definition 템플릿을 관리합니다. 서비스가 실행할 revision과 task 수(<code>task_definition</code>, <code>desired_count</code>)는 Terraform 갱신 대상에서 빠져 있고, CD와 Application Auto Scaling이 담당합니다. 템플릿을 바꿔도 실행 중인 서비스에는 자동 반영되지 않습니다.</p>
+  </div>
+</section>
+
+<!-- 7. CICD -->
+<section id="cicd">
+  <div class="section-head">
+    <div class="eyebrow">7 · CI/CD</div>
+    <h2>backend-ci-cd 워크플로</h2>
+    <p class="muted">PR과 main push에서는 테스트와 이미지 스캔까지만 실행합니다. 배포는 main에서 수동 실행(<code>workflow_dispatch</code>)할 때만 진행됩니다.</p>
+  </div>
+  <div class="pipeline">
+    <div class="stage"><b>test</b><span>JDK 17, <code>./gradlew test</code></span></div>
+    <div class="stage"><b>image</b><span>docker build 후 Trivy 스캔. HIGH·CRITICAL이 있으면 실패</span></div>
+    <div class="stage gate"><b>수동 실행 게이트</b><span>main + workflow_dispatch</span></div>
+    <div class="stage"><b>deploy</b><span>검증된 이미지를 OIDC로 ECR push, 현재 revision을 복제해 이미지만 교체 후 ECS 배포</span></div>
+  </div>
+</section>
+
+<footer>
+  기준: 저장소 <code>main</code> 작업 트리, 2026-11-17. 출처: <code>docs/DESIGN.md</code>, <code>backend/</code>, <code>terraform/environments/dev/main.tf</code>, <code>.github/workflows/backend-ci-cd.yml</code>.
+</footer>
+
+</div>
+</body>
+</html>

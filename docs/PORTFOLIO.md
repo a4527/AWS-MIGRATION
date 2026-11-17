@@ -1,154 +1,61 @@
+외부에 프로젝트를 설명할 때 쓰는 근거 문서다. 2026-11-17에 현재 코드 기준으로 다시 썼으며, 실행 증빙은 새 진행 단계(온프레미스 구축 → AWS 마이그레이션)에서 채운다. 증빙이 없는 항목은 "계획"으로 표시하고 완료로 설명하지 않는다. 이전 포트폴리오 서술은 [이전 문서 요약](LEGACY.md)에 남겼다.
+
 ## 프로젝트 한 줄 소개
 
-Spring Boot 기반 파일 공유 API를 Docker Compose 온프레미스 환경에서 먼저 완성하고, 동일한 API/데이터 계약을 유지한 채 AWS ECS Fargate, Aurora PostgreSQL, ElastiCache Redis, S3, Lambda 기반 구조로 전환한 마이그레이션 프로젝트다.
+Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 운영 기준선을 만든 뒤, 같은 API·데이터 계약을 유지한 채 Terraform으로 구성한 AWS(ECS Fargate, Aurora PostgreSQL, ElastiCache Redis, S3, Lambda)로 옮기는 마이그레이션 프로젝트다.
 
 ## 대표 아키텍처 자료
 
-### Spring Boot 요청 처리와 계층 구조
+| 자료 | 내용 | 비고 |
+| --- | --- | --- |
+| [아키텍처 페이지](assets/architecture-overview.html) | 온프레미스·AWS 구성도, 패키지·계층·의존성, 업로드 흐름, Terraform 모듈, CI/CD | 현재 코드 기준 |
+| ![Spring Boot Flow](assets/portfolio-springboot-flow.png) | 요청 처리와 계층 구조 | 재구성 전 이미지, 구조는 유효 |
+| ![Docker Compose Architecture](assets/portfolio-docker-compose.png) | 온프레미스 Compose 구성 | 재구성 전 이미지, 구조는 유효 |
+| ![AWS Architecture](assets/portfolio-aws-architecture.png) | AWS 구성 | 현재 Terraform과 같은 구성 |
 
-![Spring Boot Flow](assets/portfolio-springboot-flow.png)
+## 설계 포인트
 
-이 다이어그램은 요청이 Spring Boot 애플리케이션에 들어온 뒤 인증, Controller, Service/Domain, Repository/JPA, Database, Response DTO 변환을 거쳐 응답으로 반환되는 흐름을 설명한다.
-
-포트폴리오에서 강조할 점:
-
-- `SecurityFilterChain`과 JWT 검증을 통해 인증 책임을 분리했다.
-- Controller는 HTTP 계약, Service는 비즈니스 로직, Domain은 핵심 규칙, Infrastructure는 외부 시스템 연동을 담당한다.
-- 저장소 구현을 interface 뒤에 두어 MinIO에서 S3로 바뀌어도 API 계층의 계약을 유지할 수 있다.
-
-### Docker Compose 온프레미스 구조
-
-![Docker Compose Architecture](assets/portfolio-docker-compose.png)
-
-온프레미스 기준으로는 Nginx, Backend, PostgreSQL, Redis, MinIO를 하나의 Docker Compose 네트워크에서 실행한다.
-
-역할:
-
-- Nginx: 외부 요청 진입점과 reverse proxy
-- Backend: Spring Boot API, 인증/인가, 파일 메타데이터 처리
-- PostgreSQL: 사용자와 파일 메타데이터 저장
-- Redis: 파일 단건 메타데이터 캐시
-- MinIO: 실제 파일 바이너리 저장
-
-이 구조는 AWS 전환 전의 기능 검증 기준이다. 온프레미스에서 검증한 API 응답 형식, DB schema, Redis cache key, object key를 AWS에서도 유지하는 것이 마이그레이션의 핵심이다.
-
-### AWS 아키텍처
-
-![AWS Architecture](assets/portfolio-aws-architecture.png)
-
-AWS 구조는 subnet 계층과 managed service 책임을 분리해서 설계했다.
-
-```text
-Client
-  -> Route53
-  -> ALB HTTPS Listener
-  -> ECS Fargate Backend
-      -> Aurora PostgreSQL
-      -> ElastiCache Redis
-      -> Amazon S3
-  -> S3 ObjectCreated Event
-  -> Lambda file processor
-  -> CloudWatch Logs / Alarms
-```
-
-핵심 설명:
-
-- ALB는 public subnet에 있고, ECS task는 private subnet에서 public IP 없이 실행된다.
-- Aurora PostgreSQL과 ElastiCache Redis는 database subnet에 둔다.
-- S3, Lambda, CloudWatch는 subnet 안에 배치하는 리소스가 아니라 AWS regional service로 표현한다.
-- 현재 Terraform 기준 S3 VPC Endpoint가 없으므로 ECS는 NAT Gateway를 통해 S3 HTTPS API를 호출한다.
-- S3 접근 제어는 security group이 아니라 IAM, bucket policy, object prefix 기준으로 한다.
-
-## 파일 저장 설계
-
-파일 업로드 시 데이터는 역할에 따라 나뉘어 저장된다.
-
-| 저장소 | 저장 데이터 |
-| --- | --- |
-| Aurora PostgreSQL | 파일 ID, 소유자, 원본 파일명, 크기, content type, `storage_path`, 상태 |
-| ElastiCache Redis | `files:metadata:{fileId}` 형식의 조회용 메타데이터 캐시 |
-| Amazon S3 | 실제 파일 바이너리와 object tag |
-
-중요한 점은 Aurora나 ElastiCache를 거쳐 S3에 저장되는 구조가 아니라는 것이다.
-
-```text
-ECS Backend
-  -> Aurora PostgreSQL: metadata 저장, storage_path = S3 object key
-  -> ElastiCache Redis: cache 저장
-  -> Amazon S3: binary file upload/download
-```
-
-다운로드 시에는 ECS가 Aurora 또는 Redis에서 `storage_path`를 조회하고, 그 값을 S3 object key로 사용해 실제 파일을 읽는다.
-
-## 마이그레이션 스토리
-
-1주차에는 Spring Boot API와 온프레미스 실행 환경을 만들었다.
-
-- 인증/사용자/파일 API 구현
-- PostgreSQL, Redis, MinIO 연동
-- Nginx reverse proxy 구성
-- Docker Compose 통합 실행과 수동 검증
-- API 문서, DB 문서, 트러블슈팅 문서 작성
-
-2주차에는 AWS 전환과 운영 요소를 정리했다.
-
-- Terraform으로 VPC, subnet, security group, IAM, S3, ECR, ECS, Aurora, ElastiCache 구성
-- ALB target group health check와 ECS Fargate service 구성
-- S3 event 기반 Lambda file processor 추가
-- CloudWatch Logs/Alarms와 ECS Auto Scaling 기준 추가
-- GitHub Actions OIDC 기반 ECR push/ECS deploy 흐름 정리
-- 온프레미스와 AWS 최종 검증 절차 문서화
+| 주제 | 내용 | 근거 |
+| --- | --- | --- |
+| 인프라 교체 가능 구조 | 저장소·캐시·DB를 포트 뒤에 두고 프로필로 구현체를 고른다. 같은 이미지가 MinIO·S3, PostgreSQL·Aurora에서 동작한다 | [DESIGN](DESIGN.md#애플리케이션-구조) |
+| 업로드 실패 복구 | 객체를 먼저 쓰고 DB 기록을 재시도한다. 기록 없음이 확인될 때만 보상 삭제하고, 결과 불명이면 객체를 남겨 관리자 점검으로 정리한다 | [DEC-002](DECISIONS.md#결정-목록) |
+| 멱등 업로드 | `Idempotency-Key`를 DB에 기록해 재전송을 한 번만 처리한다. Redis를 쓰지 않아 새 가용성 의존성이 없다 | [ADR-001](adr/001-UPLOAD-IDEMPOTENCY-KEY.md) |
+| 캐시 일관성 | 다운로드·삭제는 DB로 판단하고, 캐시 쓰기는 버전 비교로 오래된 값을 거부한다. Redis 장애 시 DB로 우회한다 | [DEC-003](DECISIONS.md#결정-목록) |
+| 네트워크 경계 | ALB만 public, ECS는 private, Aurora·Redis는 인터넷 라우트 없는 database subnet. S3 권한은 `files/` 접두어로 제한 | [AWS](design/AWS.md) |
+| 배포 책임 분리 | Terraform은 인프라·템플릿, CD는 실행 revision, Auto Scaling은 task 수를 관리한다 | [DEPLOYMENT](design/DEPLOYMENT.md#ecs-관리-책임과-배포-순서-iac-02) |
 
 ## 기술 선택 이유
 
 | 영역 | 선택 | 이유 |
 | --- | --- | --- |
 | Backend | Spring Boot | 인증, REST API, validation, 테스트, 운영 설정을 안정적으로 구성하기 좋다. |
-| Security | Spring Security, JWT | ECS와 Docker Compose 양쪽에서 stateless 인증 계약을 유지할 수 있다. |
-| Database | PostgreSQL, Aurora PostgreSQL | 온프레미스와 AWS 간 schema 호환성을 유지하기 쉽다. |
-| Cache | Redis, ElastiCache Redis | 파일 메타데이터 단건 조회 캐시를 같은 key 계약으로 이전할 수 있다. |
-| Object Storage | MinIO, S3 | object key 계약을 유지한 채 로컬 object storage에서 AWS S3로 전환할 수 있다. |
-| Runtime | Docker Compose, ECS Fargate | 로컬 통합 실행과 managed container runtime을 단계적으로 비교할 수 있다. |
+| Security | Spring Security, JWT | Compose와 ECS 양쪽에서 무상태 인증 계약을 유지할 수 있다. |
+| Database | PostgreSQL, Aurora PostgreSQL | 온프레미스와 AWS 간 스키마 호환성을 유지하기 쉽다. |
+| Cache | Redis, ElastiCache Redis | 메타데이터 단건 조회 캐시를 같은 키 계약으로 옮길 수 있다. |
+| Object Storage | MinIO, S3 | S3 호환 API로 로컬에서 같은 저장 방식을 검증할 수 있다. |
+| Runtime | Docker Compose, ECS Fargate | 로컬 통합 실행과 관리형 컨테이너 실행을 단계적으로 비교할 수 있다. |
 | IaC | Terraform | 네트워크, 보안, 런타임, 관측성 리소스를 재현 가능한 코드로 관리한다. |
-| Serverless | Lambda | 업로드 후처리를 backend API 응답 경로에서 분리하고 event 기반으로 실행한다. |
+| Serverless | Lambda | 업로드 후처리를 API 응답 경로에서 분리하고 이벤트 기반으로 실행한다. |
 | Observability | CloudWatch | ECS, ALB, Lambda 로그와 지표를 한 곳에서 추적한다. |
 
-## 온프레미스와 AWS 비교
+## 증빙 수집 계획
 
-| 온프레미스 | AWS | 개선 효과 |
-| --- | --- | --- |
-| Nginx reverse proxy | ALB, Route53, ACM | managed HTTPS 진입점과 target health |
-| Docker Compose backend | ECS Fargate service | rolling deployment, scheduler self-healing |
-| PostgreSQL container | Aurora PostgreSQL | managed DB, subnet 격리 |
-| Redis container | ElastiCache Redis | managed cache, TLS 연결 가능 |
-| MinIO | Amazon S3 | durability, IAM prefix 권한, event notification |
-| backend 중심 후처리 | S3 event + Lambda | 파일 저장과 후처리 책임 분리 |
-| 로컬 로그 확인 | CloudWatch Logs/Alarms | 중앙화된 로그와 지표 기반 장애 추적 |
+| 설명할 내용 | 증빙 | 작업 | 상태 |
+| --- | --- | --- | --- |
+| 온프레미스 기능 기준선 | V-FUNC·V-DATA 결과 | ONP-02 | 완료 ([결과](worklogs/2026-11-17.md#온프레미스-구축과-검증)) |
+| Redis·DB·저장소 장애에도 정합성 유지 | V-FAIL·V-IDEM·V-ADMIN 결과 | ONP-03 | 온프레미스 완료 ([결과](worklogs/2026-11-17.md#온프레미스-구축과-검증)), 다중 인스턴스 미수행 |
+| 데이터 이전 무결성 | V-MIG 건수·해시 비교 | MIG-02 | 계획 |
+| 온프레미스·AWS 계약 동일성 | V-AWS-02와 ONP-02 비교 | VERIFY-01 | 계획 |
+| 자동 복구·관측 | ECS task 중지, Lambda 실패, 알람 | VERIFY-02 | 계획 |
+| 배포 통제·롤백 | CI 차단, 실패 배포 롤백 | CICD-01~03 | 계획 |
+| 비용·설계 비교 | 측정 기반 비교 | ARCH-01, PERF-01 | 계획 |
 
-## 운영 검증 포인트
-
-- API 계약: health, signup, login, current user, upload, download, delete가 온프레미스와 AWS에서 동일해야 한다.
-- 저장소 계약: Aurora `files.storage_path`와 S3 object key가 일치해야 한다.
-- 캐시 계약: Redis/ElastiCache key는 `files:metadata:{fileId}` 형식을 유지해야 한다.
-- 후처리: S3 ObjectCreated event가 Lambda를 호출하고, Lambda는 S3 object tag와 CloudWatch log에 결과를 남겨야 한다.
-- 장애 복구: ECS task 중지 후 service scheduler가 desired count를 복구해야 한다.
-- 관측성: ECS CPU/memory, ALB 5xx, Lambda error/duration alarm을 CloudWatch에서 확인할 수 있어야 한다.
-
-## 포트폴리오에서 말할 핵심
-
-이 프로젝트는 "AWS 서비스를 사용했다"보다 다음 세 가지가 중요하다.
-
-- 같은 API/데이터 계약을 유지하면서 인프라를 교체했다.
-- DB에는 파일 자체가 아니라 S3 object key를 저장하고, 실제 파일은 object storage에 저장했다.
-- 온프레미스 수동 운영 요소를 ALB health check, ECS scheduler, S3 event, Lambda, CloudWatch 기반 운영 구조로 바꿨다.
+완성(PORT-02) 시에는 각 항목의 실제 결과·한계·작업일지 링크를 이 표에 연결한다.
 
 ## 관련 문서
 
-- `docs/DESIGN.md`: 아키텍처 상세
-- `docs/design/API.md`: API 명세
-- `docs/design/MIGRATION.md`: 마이그레이션 전략
-- `docs/design/DEPLOYMENT.md`: 배포 방식
-- `docs/design/VALIDATION.md`: 온프레미스 검증
-- `docs/design/AWS.md`: Terraform 인프라 설명
-- `docs/design/DEPLOYMENT.md`: AWS 배포 런북
-- `docs/design/VALIDATION.md`: 최종 검증 절차
+- [DESIGN](DESIGN.md): 구조와 데이터 흐름
+- [DEPLOYMENT](design/DEPLOYMENT.md): 로컬 호스트·온프레미스·AWS 배포
+- [MIGRATION](design/MIGRATION.md): 전환 절차
+- [VALIDATION](design/VALIDATION.md): 검증 시나리오
+- [AWS](design/AWS.md): Terraform 리소스 해설

@@ -51,7 +51,7 @@ Client
   -> S3 object tag / CloudWatch Logs
 ```
 
-Day 12 기준으로 Route53과 ACM HTTPS listener는 조건부로 생성한다. `domain_name`과 `route53_hosted_zone_name`이 비어 있으면 public ALB의 HTTP listener만 사용하고, 두 값이 설정되면 HTTPS listener와 HTTP to HTTPS redirect를 적용한다.
+Route53과 ACM HTTPS listener는 조건부로 생성한다. `domain_name`과 `route53_hosted_zone_name`이 비어 있으면 public ALB의 HTTP listener만 사용하고, 두 값이 설정되면 HTTPS listener와 HTTP to HTTPS redirect를 적용한다.
 
 ## Terraform 디렉터리 구조
 
@@ -670,7 +670,7 @@ processor
 - DB의 `files.status`, `files.scan_status`를 직접 변경하지 않는다.
 - 후속 운영 단계에서 ClamAV layer, 검사 전용 컨테이너, 또는 DB 상태 동기화 경로를 추가해야 한다.
 
-이 제한을 둔 이유는 Day 11 범위를 S3 이벤트, 서버리스 권한, CloudWatch 관측성 연결까지로 고정하기 위해서다.
+이 제한은 최초 구성 범위를 S3 이벤트, 서버리스 권한, CloudWatch 관측성 연결까지로 둔 결과다. DB 상태 동기화는 FILE-03에서 다룬다.
 
 ## GitHub Actions 모듈
 
@@ -1019,7 +1019,7 @@ ecs_max_capacity  = 2
 
 ## CloudWatch Alarms
 
-Day 11 기준 CloudWatch alarm은 다음 항목을 만든다.
+CloudWatch alarm은 다음 항목을 만든다.
 
 ```text
 <name_prefix>-file-processor-errors
@@ -1478,6 +1478,7 @@ ALB target health
 - VPC endpoint
 - 실제 바이러스 검사 엔진 연동
 - Lambda 후처리 결과와 DB 상태 동기화
+- 로컬에서 Aurora에 접근하는 데이터 이전 경로 (MIG-01, [데이터 이전 제안](../proposals/DATA-MIGRATION.md))
 
 ## 최종 요약
 
