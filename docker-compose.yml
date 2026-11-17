@@ -28,8 +28,8 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
-    command: server /data --console-address ":9001"
+    # 공식 minio/minio 이미지 배포가 중단되어 같은 버전의 Bitnami 보관 이미지를 쓴다 (DEC-005). 보안 업데이트 없음, 로컬 전용.
+    image: bitnamilegacy/minio:2025.4.22
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -37,7 +37,7 @@ services:
       - "${MINIO_API_PORT:-9000}:9000"
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio-data:/data
+      - minio-data:/bitnami/minio/data
 
   backend:
     build:
@@ -58,6 +58,9 @@ services:
       APP_JWT_EXPIRES_IN_SECONDS: ${APP_JWT_EXPIRES_IN_SECONDS:-3600}
       APP_FILE_MAX_SIZE_BYTES: ${APP_FILE_MAX_SIZE_BYTES:-10485760}
       APP_FILE_ALLOWED_EXTENSIONS: ${APP_FILE_ALLOWED_EXTENSIONS:-pdf,png,jpg,jpeg,txt,csv}
+      APP_FILE_IDEMPOTENCY_TTL: ${APP_FILE_IDEMPOTENCY_TTL:-PT24H}
+      APP_FILE_IDEMPOTENCY_IN_PROGRESS_TIMEOUT: ${APP_FILE_IDEMPOTENCY_IN_PROGRESS_TIMEOUT:-PT15M}
+      APP_FILE_UPLOAD_RECORD_ATTEMPTS: ${APP_FILE_UPLOAD_RECORD_ATTEMPTS:-3}
     depends_on:
       postgres:
         condition: service_healthy
@@ -74,6 +77,17 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
     depends_on:
       - backend
+
+  # 검증용 MinIO 클라이언트. `docker compose --profile tools run --rm mc "mc ls local/files"`
+  mc:
+    image: bitnamilegacy/minio-client:2025.4.16
+    profiles: ["tools"]
+    entrypoint: ["/bin/sh", "-c"]
+    environment:
+      HOME: /tmp
+      MC_HOST_local: http://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@minio:9000
+    depends_on:
+      - minio
 
 volumes:
   postgres-data:

@@ -33,6 +33,13 @@ public class InMemoryFileMetadataRepository implements FileMetadataRepository {
     }
 
     @Override
+    public Optional<FileMetadata> findByStoragePath(String storagePath) {
+        return filesById.values().stream()
+                .filter(file -> file.storagePath().equals(storagePath))
+                .findFirst();
+    }
+
+    @Override
     public List<FileMetadata> findVisibleByOwnerId(Long ownerId) {
         return filesById.values().stream()
                 .filter(file -> file.ownerId().equals(ownerId))

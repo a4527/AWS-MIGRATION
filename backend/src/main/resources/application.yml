@@ -15,6 +15,11 @@ spring:
         format_sql: true
   cache:
     type: simple
+  servlet:
+    multipart:
+      # 업로드 제한(app.file.max-size-bytes)과 맞춘다. Spring 기본값(1MB)이면 1MB 초과 업로드가 500으로 실패한다.
+      max-file-size: ${APP_FILE_MAX_SIZE_BYTES:10485760}
+      max-request-size: ${APP_MULTIPART_MAX_REQUEST_BYTES:11534336}
 
 server:
   port: ${SERVER_PORT:8080}
@@ -36,5 +41,12 @@ app:
   file:
     max-size-bytes: ${APP_FILE_MAX_SIZE_BYTES:10485760}
     allowed-extensions: ${APP_FILE_ALLOWED_EXTENSIONS:pdf,png,jpg,jpeg,txt,csv}
+    idempotency:
+      ttl: ${APP_FILE_IDEMPOTENCY_TTL:PT24H}
+      in-progress-timeout: ${APP_FILE_IDEMPOTENCY_IN_PROGRESS_TIMEOUT:PT15M}
+      cleanup-interval: ${APP_FILE_IDEMPOTENCY_CLEANUP_INTERVAL:PT1H}
+    upload:
+      record-attempts: ${APP_FILE_UPLOAD_RECORD_ATTEMPTS:3}
+      record-backoff: ${APP_FILE_UPLOAD_RECORD_BACKOFF:PT0.1S}
   storage:
     local-root: ${APP_STORAGE_LOCAL_ROOT:build/local-storage}

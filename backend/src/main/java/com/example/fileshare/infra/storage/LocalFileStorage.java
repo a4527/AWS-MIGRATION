@@ -4,7 +4,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.UUID;
+import java.util.List;
+import java.util.stream.Stream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.Resource;
@@ -22,15 +23,15 @@ public class LocalFileStorage implements FileStorage {
     }
 
     @Override
-    public StoredFile store(String originalFileName, InputStream inputStream) throws IOException {
+    public StoredFile allocate(String originalFileName) {
+        String storedFileName = ObjectNames.newObjectName(originalFileName);
+        return new StoredFile(storedFileName, root.resolve(storedFileName).normalize().toString());
+    }
+
+    @Override
+    public void write(StoredFile target, InputStream inputStream, long size, String contentType) throws IOException {
         Files.createDirectories(root);
-
-        String extension = extensionOf(originalFileName);
-        String storedFileName = UUID.randomUUID() + extension;
-        Path target = root.resolve(storedFileName).normalize();
-        Files.copy(inputStream, target);
-
-        return new StoredFile(storedFileName, target.toString());
+        Files.copy(inputStream, Path.of(target.storagePath()));
     }
 
     @Override
@@ -43,11 +44,28 @@ public class LocalFileStorage implements FileStorage {
         return new StorageObject(resource, Files.size(path));
     }
 
-    private String extensionOf(String fileName) {
-        int dotIndex = fileName.lastIndexOf('.');
-        if (dotIndex < 0) {
-            return "";
+    @Override
+    public void delete(String storagePath) throws IOException {
+        Files.deleteIfExists(Path.of(storagePath));
+    }
+
+    @Override
+    public List<StorageEntry> list() throws IOException {
+        if (!Files.isDirectory(root)) {
+            return List.of();
         }
-        return fileName.substring(dotIndex);
+        try (Stream<Path> paths = Files.list(root)) {
+            return paths.filter(Files::isRegularFile)
+                    .map(this::toEntry)
+                    .toList();
+        }
+    }
+
+    private StorageEntry toEntry(Path path) {
+        try {
+            return new StorageEntry(path.toString(), Files.size(path), Files.getLastModifiedTime(path).toInstant());
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to read local object attributes: " + path, exception);
+        }
     }
 }

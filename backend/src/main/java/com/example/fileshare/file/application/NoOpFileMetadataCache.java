@@ -19,6 +19,6 @@ public class NoOpFileMetadataCache implements FileMetadataCache {
     }
 
     @Override
-    public void evict(Long id) {
+    public void putLatest(FileMetadata fileMetadata) {
     }
 }

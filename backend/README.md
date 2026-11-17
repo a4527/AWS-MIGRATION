@@ -24,9 +24,9 @@ HTTP 요청
 ```text
 POST /api/files
 -> FileController.upload()
--> FileService.upload()
--> FileStorage.store()
--> FileMetadataRepository.save()
+-> FileUploadService.upload()
+-> FileStorage.allocate() / write()
+-> UploadRecorder.record() (FileMetadataRepository.save())
 -> FileMetadataCache.put()
 -> ApiResponse<FileResponse>
 ```
@@ -211,15 +211,18 @@ public User signup(SignupRequest request) {
 -> 사용자 저장
 ```
 
-`FileService.upload()`는 파일 업로드 규칙을 처리한다.
+`FileUploadService.upload()`는 파일 업로드 규칙을 처리한다. 조회·다운로드·삭제는 `FileService`가 맡는다.
 
 ```text
 파일 크기와 확장자 검증
--> 파일 저장소에 실제 파일 저장
--> 파일 메타데이터 생성
--> DB에 메타데이터 저장
+-> 저장 위치(UUID) 먼저 결정
+-> (Idempotency-Key가 있으면) upload_requests에 진행 중 기록
+-> 파일 저장소에 크기를 아는 스트림으로 저장
+-> DB에 메타데이터 저장 (실패 시 짧게 재시도, 끝내 실패하면 기록 여부 확인 후 객체 정리)
 -> Redis 캐시에 메타데이터 저장
 ```
+
+서비스는 `AuthUserPrincipal` 대신 사용자 ID와 관리자 여부만 담은 `Actor`를 받는다.
 
 Service의 핵심 원칙은 "기능의 의미 있는 규칙은 Service에 둔다"는 것이다. Controller는 HTTP 처리에 집중하고, Repository는 저장소 접근에 집중한다.
 
@@ -439,7 +442,7 @@ public interface FileMetadataCache {
 
     void put(FileMetadata fileMetadata);
 
-    void evict(Long id);
+    void putLatest(FileMetadata fileMetadata);
 }
 ```
 
@@ -452,9 +455,11 @@ files:metadata:{fileId}
 TTL은 5분이다.
 
 ```java
-private static final Duration TTL = Duration.ofMinutes(5);
-private static final String KEY_PREFIX = "files:metadata:";
+static final Duration TTL = Duration.ofMinutes(5);
+static final String KEY_PREFIX = "files:metadata:";
 ```
+
+캐시 값에는 `updatedAt`에서 계산한 `version`이 들어간다. 쓰기는 Lua 스크립트로 이미 있는 값보다 오래된 값을 거부한다. `putLatest`는 삭제처럼 반드시 반영해야 하는 변경에 쓰며, 실패하면 즉시 2회, 이후 백그라운드에서 지수 간격으로 다시 시도한다.
 
 파일 단건 조회 흐름:
 
@@ -462,10 +467,12 @@ private static final String KEY_PREFIX = "files:metadata:";
 Redis 캐시 조회
 -> 캐시에 있으면 반환
 -> 캐시에 없으면 PostgreSQL 조회
--> 조회 결과를 Redis에 다시 저장
+-> 조회 결과를 Redis에 다시 저장 (캐시 적중 시에는 다시 쓰지 않음)
 ```
 
-Redis가 꺼져 있을 때는 `NoOpFileMetadataCache`가 사용된다. 이 구현체는 아무것도 저장하지 않고 항상 cache miss를 반환한다.
+다운로드와 삭제는 캐시를 읽지 않고 DB에서 상태를 확인한다.
+
+`redis` 프로필이 꺼져 있으면 `NoOpFileMetadataCache`가 사용된다. 이 구현체는 아무것도 저장하지 않고 항상 cache miss를 반환한다. `redis` 프로필이 켜져 있는데 Redis가 응답하지 않으면 `RedisFileMetadataCache`가 오류를 로그로만 남기고 DB로 우회한다.
 
 ## 13. MinIO: 실제 파일 저장소
 
@@ -554,11 +561,15 @@ JWT 인증 흐름:
 파일 API는 현재 사용자를 이렇게 받는다.
 
 ```java
-public ApiResponse<FileResponse> upload(
+public ResponseEntity<ApiResponse<FileResponse>> upload(
         @AuthenticationPrincipal AuthUserPrincipal principal,
-        @RequestParam MultipartFile file
+        @RequestParam MultipartFile file,
+        @RequestParam(required = false) String description,
+        @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey
 )
 ```
+
+컨트롤러는 `principal.toActor()`로 변환해 서비스에 넘긴다.
 
 ## 15. Exception Handling: 에러 응답 통일
 
@@ -697,9 +708,9 @@ POST /api/auth/login
 POST /api/files
 -> JwtAuthenticationFilter
 -> FileController.upload()
--> FileService.upload()
+-> FileUploadService.upload()
 -> 확장자와 크기 검증
--> FileStorage.store()
+-> FileStorage.allocate() / write()
 -> FileMetadataRepository.save()
 -> FileMetadataCache.put()
 -> FileResponse
@@ -723,7 +734,7 @@ GET /api/files/{id}
 ```text
 GET /api/files/{id}/download
 -> FileService.download()
--> FileMetadata 조회
+-> FileMetadata를 DB에서 조회 (캐시 사용 안 함)
 -> 파일 상태 확인
 -> FileStorage.load()
 -> ResponseEntity<Resource>
@@ -738,7 +749,7 @@ DELETE /api/files/{id}
 -> 권한 확인
 -> status를 DELETED로 변경
 -> FileMetadataRepository.save()
--> FileMetadataCache.evict()
+-> FileMetadataCache.putLatest() (삭제 상태를 캐시에 덮어씀)
 ```
 
 현재 삭제는 실제 파일을 지우는 물리 삭제가 아니라 메타데이터 상태를 바꾸는 논리 삭제다.

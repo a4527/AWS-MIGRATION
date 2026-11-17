@@ -4,6 +4,8 @@ import com.example.fileshare.common.api.ApiResponse;
 import com.example.fileshare.config.security.AuthUserPrincipal;
 import com.example.fileshare.file.application.FileDownload;
 import com.example.fileshare.file.application.FileService;
+import com.example.fileshare.file.application.FileUploadService;
+import com.example.fileshare.file.application.UploadOutcome;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import org.springframework.core.io.Resource;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,24 +28,35 @@ import org.springframework.web.multipart.MultipartFile;
 @RequestMapping("/api/files")
 public class FileController {
 
-    private final FileService fileService;
+    static final String IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
+    static final String IDEMPOTENT_REPLAYED_HEADER = "Idempotent-Replayed";
 
-    public FileController(FileService fileService) {
+    private final FileService fileService;
+    private final FileUploadService fileUploadService;
+
+    public FileController(FileService fileService, FileUploadService fileUploadService) {
         this.fileService = fileService;
+        this.fileUploadService = fileUploadService;
     }
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ApiResponse<FileResponse> upload(
+    public ResponseEntity<ApiResponse<FileResponse>> upload(
             @AuthenticationPrincipal AuthUserPrincipal principal,
             @RequestParam MultipartFile file,
-            @RequestParam(required = false) String description
+            @RequestParam(required = false) String description,
+            @RequestHeader(value = IDEMPOTENCY_KEY_HEADER, required = false) String idempotencyKey
     ) {
-        return ApiResponse.ok(FileResponse.from(fileService.upload(principal, file, description)), "File uploaded");
+        UploadOutcome outcome = fileUploadService.upload(principal.toActor(), file, description, idempotencyKey);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok();
+        if (outcome.replayed()) {
+            response.header(IDEMPOTENT_REPLAYED_HEADER, "true");
+        }
+        return response.body(ApiResponse.ok(FileResponse.from(outcome.metadata()), "File uploaded"));
     }
 
     @GetMapping
     public ApiResponse<List<FileResponse>> listMine(@AuthenticationPrincipal AuthUserPrincipal principal) {
-        return ApiResponse.ok(fileService.listMine(principal).stream()
+        return ApiResponse.ok(fileService.listMine(principal.toActor()).stream()
                 .map(FileResponse::from)
                 .toList());
     }
@@ -52,7 +66,7 @@ public class FileController {
             @AuthenticationPrincipal AuthUserPrincipal principal,
             @PathVariable Long id
     ) {
-        return ApiResponse.ok(FileResponse.from(fileService.get(principal, id)));
+        return ApiResponse.ok(FileResponse.from(fileService.get(principal.toActor(), id)));
     }
 
     @GetMapping("/{id}/download")
@@ -60,7 +74,7 @@ public class FileController {
             @AuthenticationPrincipal AuthUserPrincipal principal,
             @PathVariable Long id
     ) {
-        FileDownload download = fileService.download(principal, id);
+        FileDownload download = fileService.download(principal.toActor(), id);
         ContentDisposition disposition = ContentDisposition.attachment()
                 .filename(download.metadata().originalFileName(), StandardCharsets.UTF_8)
                 .build();
@@ -77,6 +91,6 @@ public class FileController {
             @AuthenticationPrincipal AuthUserPrincipal principal,
             @PathVariable Long id
     ) {
-        return ApiResponse.ok(FileDeleteResponse.from(fileService.delete(principal, id)), "File deleted");
+        return ApiResponse.ok(FileDeleteResponse.from(fileService.delete(principal.toActor(), id)), "File deleted");
     }
 }

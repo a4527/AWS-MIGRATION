@@ -2,14 +2,19 @@ package com.example.fileshare.infra.storage;
 
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
+import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
+import io.minio.RemoveObjectArgs;
+import io.minio.Result;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
+import io.minio.messages.Item;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.core.io.InputStreamResource;
@@ -36,16 +41,21 @@ public class MinioFileStorage implements FileStorage {
     }
 
     @Override
-    public StoredFile store(String originalFileName, InputStream inputStream) throws IOException {
+    public StoredFile allocate(String originalFileName) {
+        String objectName = ObjectNames.newObjectName(originalFileName);
+        return new StoredFile(objectName, objectName);
+    }
+
+    @Override
+    public void write(StoredFile target, InputStream inputStream, long size, String contentType) throws IOException {
         try {
             ensureBucket();
-            String objectName = UUID.randomUUID() + extensionOf(originalFileName);
             minioClient.putObject(PutObjectArgs.builder()
                     .bucket(bucket)
-                    .object(objectName)
-                    .stream(inputStream, -1, 10 * 1024 * 1024)
+                    .object(target.storagePath())
+                    .stream(inputStream, size, -1)
+                    .contentType(contentType)
                     .build());
-            return new StoredFile(objectName, objectName);
         } catch (Exception exception) {
             throw new IOException("Failed to store file in MinIO", exception);
         }
@@ -68,6 +78,37 @@ public class MinioFileStorage implements FileStorage {
         }
     }
 
+    @Override
+    public void delete(String storagePath) throws IOException {
+        try {
+            minioClient.removeObject(RemoveObjectArgs.builder()
+                    .bucket(bucket)
+                    .object(storagePath)
+                    .build());
+        } catch (Exception exception) {
+            throw new IOException("Failed to delete file from MinIO", exception);
+        }
+    }
+
+    @Override
+    public List<StorageEntry> list() throws IOException {
+        try {
+            List<StorageEntry> entries = new ArrayList<>();
+            for (Result<Item> result : minioClient.listObjects(ListObjectsArgs.builder()
+                    .bucket(bucket)
+                    .recursive(true)
+                    .build())) {
+                Item item = result.get();
+                if (!item.isDir()) {
+                    entries.add(new StorageEntry(item.objectName(), item.size(), item.lastModified().toInstant()));
+                }
+            }
+            return entries;
+        } catch (Exception exception) {
+            throw new IOException("Failed to list files in MinIO", exception);
+        }
+    }
+
     private void ensureBucket() throws Exception {
         boolean exists = minioClient.bucketExists(BucketExistsArgs.builder()
                 .bucket(bucket)
@@ -77,13 +118,5 @@ public class MinioFileStorage implements FileStorage {
                     .bucket(bucket)
                     .build());
         }
-    }
-
-    private String extensionOf(String fileName) {
-        int dotIndex = fileName.lastIndexOf('.');
-        if (dotIndex < 0) {
-            return "";
-        }
-        return fileName.substring(dotIndex);
     }
 }
