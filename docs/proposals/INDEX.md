@@ -2,6 +2,6 @@
 
 | 주제 | 상태 | 관련 작업 |
 | --- | --- | --- |
-| [데이터 이전 방식](DATA-MIGRATION.md) | 미승인, MIG-01에서 결정 | MIG-01, MIG-02 |
+| [데이터 이전 방식](DATA-MIGRATION.md) | A 채택([DEC-007](../DECISIONS.md#결정-목록)), B·C·D 미채택 보존 | MIG-01, MIG-02 |
 
 [AWS 운영 한계](../design/AWS.md#현재-한계) 중 비교가 필요한 대안은 ARCH-01에서 조사하며, 조사 시 주제 파일을 추가해 이 목록에 연결한다.

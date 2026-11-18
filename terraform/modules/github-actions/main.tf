@@ -93,6 +93,21 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["*"]
   }
 
+  # CD copies the Owner tag onto each new revision; tagging is allowed only at registration.
+  statement {
+    sid = "AllowTagTaskDefinitionOnRegister"
+    actions = [
+      "ecs:TagResource",
+    ]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "ecs:CreateAction"
+      values   = ["RegisterTaskDefinition"]
+    }
+  }
+
   statement {
     sid = "AllowPassEcsTaskRoles"
     actions = [

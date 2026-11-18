@@ -1,0 +1,32 @@
+aws_region   = "us-east-1"
+# Required. Every resource gets this Owner tag; untagged resources may be deleted.
+owner        = "replace-with-owner-id"
+project_name = "fileshare"
+environment  = "dev"
+
+vpc_cidr           = "10.20.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b"]
+public_subnets     = ["10.20.0.0/24", "10.20.1.0/24"]
+private_subnets    = ["10.20.10.0/24", "10.20.11.0/24"]
+database_subnets   = ["10.20.20.0/24", "10.20.21.0/24"]
+
+file_bucket_name      = "replace-with-globally-unique-fileshare-dev-bucket"
+force_destroy_buckets = false
+
+# Must match aurora_master_password in ../dev/terraform.tfvars until SEC-01.
+aurora_master_password = "replace-with-strong-development-password"
+
+# 0 ACU = compute paused while idle; only storage is billed.
+aurora_min_capacity             = 0
+aurora_max_capacity             = 2
+aurora_seconds_until_auto_pause = 300
+aurora_deletion_protection      = true
+aurora_skip_final_snapshot      = false
+
+# Monthly budget (PORT-01). Put real addresses only in terraform.tfvars.
+budget_limit_usd           = 10
+budget_alert_emails        = ["replace-with-alert-email@example.com"]
+budget_filter_by_owner_tag = true
+
+# Extra tags. Do not set Owner here; var.owner always wins.
+tags = {}

@@ -122,7 +122,7 @@ DB_PASSWORD=<secret>
 REDIS_HOST=<elasticache-primary-endpoint>
 REDIS_PORT=6379
 REDIS_SSL_ENABLED=true
-AWS_REGION=ap-northeast-2
+AWS_REGION=us-east-1
 S3_BUCKET=<terraform-output-file-bucket-name>
 S3_OBJECT_PREFIX=files/
 ```
@@ -133,9 +133,23 @@ S3_OBJECT_PREFIX=files/
 
 AWS 리소스 생성, GitHub Actions 배포, 기능 확인, 정리 절차를 순서대로 실행하는 런북이다. PORT-01에서 계정·예산·정리 조건을 확정한 뒤에만 실행한다. 대상 구성은 현재 Terraform 그대로다([DEC-004](../DECISIONS.md#결정-목록)).
 
-실습 비용이 발생하므로 테스트가 끝나면 `terraform destroy`로 정리한다.
+Terraform은 유지 계층(`dev-data`: VPC·S3·Aurora)과 실습 계층(`dev`: NAT·ALB·ECS·ECR·Lambda·Redis 등)으로 나뉜다([DEC-008](../DECISIONS.md#결정-목록), [계층 설명](AWS.md#유지-계층과-실습-계층)). 유지 계층은 한 번 만들고 남겨 두며, 실습이 끝나면 실습 계층만 `terraform destroy`로 정리한다.
 
 ### 4.0 사전 준비
+
+PORT-01에서 정한 실행 조건([DEC-006](../DECISIONS.md#결정-목록)):
+
+| 항목 | 값 |
+| --- | --- |
+| 리전 | `us-east-1` (AZ `us-east-1a`, `us-east-1b`) |
+| 인증 | IAM user access key(`aws configure`). 키는 `~/.aws/credentials`에만 두고 저장소·문서·tfvars에 넣지 않는다. 계정은 조직의 연결 계정(linked account)이라 비용 할당 태그 조회 권한이 없다 |
+| 실습 데이터 | 검증 시나리오로 새로 만든 데이터만 쓴다. 온프레미스 데이터는 옮기지 않는다([DEC-007](../DECISIONS.md#결정-목록)) |
+| 보존·삭제 범위 | 유지: S3 file bucket, Aurora(0 ACU 자동 일시정지), VPC. 실습마다 삭제: `dev` 계층 전체 |
+| 실험 중단 조건 | 실습 종료, 예산 알림 수신, 원인 모를 비용 증가 시 `dev` 계층을 바로 destroy한다 |
+| 예산 한도·알림 | 월 $10. 실제 비용 50·80·100%와 예측 100%에서 이메일로 알린다. 유지 계층 Terraform의 `aws_budgets_budget`이 만들고, 수신 주소는 `dev-data/terraform.tfvars`에만 둔다. 기본으로 `Owner` 태그 비용만 센다. Owner가 비용 할당 태그로 활성화되어 있지 않으면 예산이 0으로 보이므로 첫 apply 뒤 확인한다(4.4) |
+| 필수 태그 | 모든 리소스에 `Owner`를 붙인다. 없으면 계정 정리 정책에 삭제될 수 있다. 값은 두 계층 tfvars의 `owner`에 둔다([DEC-009](../DECISIONS.md#결정-목록), [태그 규칙](AWS.md#공통-태그)) |
+| 계정 ID | 비밀값은 아니지만 문서에 적지 않는다. `aws sts get-caller-identity`로 확인한다 |
+
 
 로컬에 다음 도구가 필요하다.
 
@@ -157,17 +171,18 @@ https://github.com/<owner>/aws-migration-project
 
 로컬 터미널에서 AWS에 로그인한다.
 
-Access key 방식:
+Access key 방식(기본):
 
 ```bash
-aws configure
+aws configure              # Default region name: us-east-1, output: json
 ```
 
-SSO 방식:
+SSO 방식(선택):
 
 ```bash
 aws configure sso
-aws sso login
+aws sso login --profile <profile>
+export AWS_PROFILE=<profile>
 ```
 
 현재 로그인된 AWS 계정을 확인한다.
@@ -180,18 +195,37 @@ aws sts get-caller-identity
 
 ### 4.2 Terraform 변수 파일 작성
 
-Terraform dev 환경으로 이동한다.
+유지 계층을 처음 만들 때만 다음을 수행한다.
+
+```bash
+cd terraform/environments/dev-data
+cp terraform.tfvars.example terraform.tfvars
+```
+
+`dev-data/terraform.tfvars`에서 최소 다음 값을 수정한다.
+
+```hcl
+owner                  = "<Owner 태그 값>"
+file_bucket_name       = "replace-with-globally-unique-bucket-name"
+aurora_master_password = "replace-with-strong-development-password"
+budget_alert_emails    = ["<알림 받을 주소>"]
+```
+
+기본값은 Aurora 최소 0 ACU·300초 뒤 자동 일시정지, 삭제 보호 켜짐, 최종 스냅샷 남김이다.
+
+실습 계층 변수 파일을 만든다.
 
 ```bash
 cd terraform/environments/dev
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-`terraform.tfvars`에서 최소 다음 값을 수정한다.
+`dev/terraform.tfvars`에서 최소 다음 값을 수정한다. `file_bucket_name`과 `aurora_master_password`는 유지 계층과 같은 값이어야 한다.
 
 ```hcl
-file_bucket_name       = "replace-with-globally-unique-bucket-name"
-aurora_master_password = "replace-with-strong-development-password"
+owner                  = "same-as-dev-data"
+file_bucket_name       = "same-as-dev-data"
+aurora_master_password = "same-as-dev-data"
 app_jwt_secret         = "replace-with-strong-development-jwt-secret"
 
 github_repository = "<github-owner>/aws-migration-project"
@@ -215,6 +249,8 @@ route53_hosted_zone_name = "example.com"
 
 ### 4.3 Terraform 검증
 
+유지 계층이 아직 없으면 `dev-data`에서 먼저 실행한다. 실습 계층은 유지 계층 리소스를 이름으로 조회하므로 유지 계층이 없으면 plan이 실패한다.
+
 ```bash
 terraform init
 terraform fmt -recursive ../..
@@ -224,18 +260,24 @@ terraform plan
 
 `terraform plan`에서 생성될 리소스를 확인한다.
 
-주요 생성 대상:
+유지 계층(`dev-data`) 생성 대상:
 
 ```text
-VPC / subnet / route table
-NAT Gateway
+VPC / IGW / subnet / route table (private route table에는 NAT 경로 없음)
+S3 bucket (versioning, 암호화, public access 차단)
+Aurora PostgreSQL cluster / instance / subnet group / security group (규칙 없음)
+```
+
+실습 계층(`dev`) 생성 대상:
+
+```text
+NAT Gateway / EIP / private 기본 경로
+Aurora SG의 5432 from application SG 규칙
 ALB / target group
 ACM certificate / Route53 records, when domain variables are set
 ECR repository
 ECS cluster / service / task definition
-Aurora PostgreSQL
 ElastiCache Redis
-S3 bucket
 IAM roles / policies
 GitHub Actions OIDC provider / deploy role
 Lambda file processor
@@ -246,11 +288,26 @@ ECS Service Auto Scaling
 
 ### 4.4 Terraform apply
 
-리소스를 생성한다.
+유지 계층이 없으면 `dev-data`에서 먼저, 그다음 `dev`에서 리소스를 생성한다.
 
 ```bash
 terraform apply
 ```
+
+유지 계층을 처음 apply한 뒤 다음을 확인한다.
+
+```bash
+# 예산 구독 이메일 확인 메일은 오지 않는다(Budgets는 확인 절차 없음). 예산 목록만 확인한다.
+aws budgets describe-budgets --account-id "$(aws sts get-caller-identity --query Account --output text)" \
+  --query 'Budgets[].{name:BudgetName,limit:BudgetLimit.Amount}'
+# Owner가 활성 비용 할당 태그인지. Inactive이거나 없으면 budget_filter_by_owner_tag = false로 바꾸거나 관리자에게 활성화를 요청한다.
+aws ce list-cost-allocation-tags --tag-keys Owner --query 'CostAllocationTags[].{key:TagKey,status:Status}'
+# Owner 없는 리소스가 없는지(이 프로젝트 태그 기준)
+aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=fileshare \
+  --query 'ResourceTagMappingList[?!(Tags[?Key==`Owner`])].ResourceARN'
+```
+
+실습 계층을 다시 만들면 ECR repository도 새로 생기므로 이미지를 다시 push해야 한다(4.6). GitHub Actions deploy role은 같은 이름으로 다시 만들어져 ARN이 같으므로 secret은 그대로 쓸 수 있다.
 
 완료 후 output을 확인한다.
 
@@ -612,11 +669,16 @@ REDIS_SSL_ENABLED=true
 
 ### 4.12 정리
 
-실습이 끝나면 비용 방지를 위해 리소스를 삭제한다.
+실습이 끝나면 비용 방지를 위해 **실습 계층만** 삭제한다.
 
 ```bash
+cd terraform/environments/dev
 terraform destroy
 ```
+
+삭제 후 `dev-data`의 `terraform plan`이 변경 없음(no changes)인지 확인한다. 실습 계층이 붙인 NAT 경로와 Aurora 허용 규칙이 함께 지워졌는지 보는 확인이다. Aurora가 몇 분 뒤 일시정지되는지는 콘솔의 cluster 상태나 `ServerlessDatabaseCapacity` 지표로 확인한다.
+
+유지 계층까지 지울 때만 `dev-data`에서 `aurora_deletion_protection = false`를 apply한 뒤 `terraform destroy`한다. 기본값으로 최종 스냅샷 `<prefix>-aurora-final`이 남는다. 같은 이름의 스냅샷이 이미 있으면 삭제가 실패하므로 이전 스냅샷을 정리하거나 보존 여부를 먼저 정한다.
 
 삭제가 실패할 수 있는 대표 원인:
 
@@ -626,7 +688,7 @@ ECR repository에 image가 남아 있음
 Aurora final snapshot 설정
 ```
 
-개발 실습에서 한 번에 삭제하려면 Terraform 변수에서 다음 설정을 검토한다.
+유지 계층의 bucket을 비어 있지 않은 상태로 지우려면 `dev-data`에서 다음 설정을 검토한다. 파일을 보존하려면 켜지 않는다.
 
 ```hcl
 force_destroy_buckets = true
@@ -656,11 +718,21 @@ ECR
 실습 권장 방식:
 
 ```text
-terraform apply
+(처음 한 번) dev-data terraform apply
+dev terraform apply
 GitHub Actions 배포
 기능 테스트
-terraform destroy
+dev terraform destroy
 ```
+
+쉬는 동안 남는 비용은 유지 계층의 S3·Aurora 스토리지와 Aurora 백업이다. 2026-11-18 서드파티 가격 자료 기준 us-east-1 추정치는 다음과 같다(공식 가격·실제 청구로 확인 전):
+
+| 항목 | 쉬는 동안 월 비용 |
+| --- | --- |
+| S3 (현재 수십 MB) | $0.01 미만 ($0.023/GB-월) |
+| Aurora 0 ACU 일시정지 | 스토리지 $0.10/GB-월과 I/O만, 현재 규모 몇 센트 |
+| 참고: Aurora 0.5 ACU 상시 | 약 $44 |
+| 참고: RDS db.t4g.micro 상시 | 약 $14 |
 
 ## 5. CI/CD
 
@@ -722,7 +794,7 @@ iam:PassRole policy for ECS task roles
 기본 배포 대상:
 
 ```text
-AWS_REGION=ap-northeast-2
+AWS_REGION=us-east-1
 ECR_REPOSITORY=fileshare-dev-backend
 ECS_CLUSTER=fileshare-dev-ecs
 ECS_SERVICE=fileshare-dev-backend
@@ -754,6 +826,8 @@ CPU·메모리·환경변수·role 등 task definition 설정을 바꿀 때는 T
 2. `terraform output -raw ecs_task_definition_template_arn`으로 정확한 템플릿 ARN을 얻는다. Family의 latest revision은 CD가 만든 revision일 수 있으므로 대신 사용하지 않는다.
 3. 해당 ARN의 task definition을 조회해 등록 가능한 필드만 사용하고 backend image를 현재 검증된 이미지로 교체한다. 새 revision을 등록하고 설정 차이를 검토한 뒤 service에 명시적으로 배포한다. 현재 일반 환경변수에 비밀값이 있으므로 JSON 원문을 로그·artifact·문서에 남기지 않는다. 비밀값 주입 개선은 SEC-01에서 추적한다.
 4. 안정화·health·기능 smoke를 확인하고 실패하면 보존한 정상 revision으로 service를 되돌린다. 이 수동 설정 배포·롤백은 CICD-02/03의 자동화·실행 검증 완료를 뜻하지 않는다.
+
+실습 계층(`dev`)을 destroy했다가 다시 apply하면 ECR·ECS service가 새로 만들어지므로([DEC-008](../DECISIONS.md#결정-목록)) 매번 위 최초 배포 순서를 따른다. 이전 실습의 revision·task 수는 이어지지 않는다.
 
 Service를 삭제·재생성하면 ignore 규칙에도 불구하고 Terraform 템플릿과 초기 task 수가 다시 사용된다. 교체 plan은 현재 배포 이미지·설정·task 수와 비교하고 복구용 이미지 존재를 확인한 뒤 실행한다. 인프라 설정이 현재 task와 호환되지 않는 변경은 템플릿 생성만으로 완료 처리하지 않는다.
 

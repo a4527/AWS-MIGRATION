@@ -22,3 +22,8 @@ output "database_route_table_id" {
   description = "Route table ID for database subnets."
   value       = aws_route_table.database.id
 }
+
+output "private_route_table_id" {
+  description = "Route table ID for private subnets. The application layer adds the NAT default route."
+  value       = aws_route_table.private.id
+}

@@ -43,6 +43,7 @@ Client → Route53·ACM(선택) → ALB (public subnet)
 GitHub Actions(OIDC) → ECR → ECS rolling deployment
 ```
 
+- 리전은 `us-east-1`이다. Terraform state는 유지 계층(VPC·S3·Aurora)과 실습 계층(NAT·ALB·ECS·ECR·Lambda·Redis 등)으로 나뉜다. 실습 계층만 실습마다 만들고 지우며, Aurora는 최소 0 ACU로 쉬는 동안 일시정지한다([DEC-008](DECISIONS.md#결정-목록), [계층 설명](design/AWS.md#유지-계층과-실습-계층)).
 - VPC `10.20.0.0/16`, 2개 AZ에 public·private·database subnet. NAT Gateway는 dev 비용 절감을 위해 1개다. database subnet에는 인터넷 라우트가 없다.
 - Security Group: ALB → app 8080, app → Aurora 5432, app → Redis 6379만 허용한다.
 - 애플리케이션과 Lambda의 S3 권한은 `files/` 접두어로 제한한다.

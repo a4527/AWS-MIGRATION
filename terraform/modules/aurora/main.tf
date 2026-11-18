@@ -7,24 +7,40 @@ resource "aws_db_subnet_group" "this" {
   })
 }
 
+# Owned by the persistent data layer. The application layer adds the ingress
+# rule from its runtime security group, so no rule remains after it is destroyed.
+resource "aws_security_group" "this" {
+  name        = "${var.name_prefix}-aurora"
+  description = "Allows PostgreSQL traffic from the application runtime."
+  vpc_id      = var.vpc_id
+
+  tags = merge(var.tags, {
+    Name = "${var.name_prefix}-aurora"
+  })
+}
+
 resource "aws_rds_cluster" "this" {
-  cluster_identifier      = "${var.name_prefix}-aurora"
-  engine                  = "aurora-postgresql"
-  engine_mode             = "provisioned"
-  engine_version          = var.engine_version
-  database_name           = var.database_name
-  master_username         = var.master_username
-  master_password         = var.master_password
-  db_subnet_group_name    = aws_db_subnet_group.this.name
-  vpc_security_group_ids  = var.security_group_ids
-  storage_encrypted       = true
-  backup_retention_period = 1
-  deletion_protection     = false
-  skip_final_snapshot     = var.skip_final_snapshot
+  cluster_identifier        = "${var.name_prefix}-aurora"
+  engine                    = "aurora-postgresql"
+  engine_mode               = "provisioned"
+  engine_version            = var.engine_version
+  database_name             = var.database_name
+  master_username           = var.master_username
+  master_password           = var.master_password
+  db_subnet_group_name      = aws_db_subnet_group.this.name
+  vpc_security_group_ids    = [aws_security_group.this.id]
+  storage_encrypted         = true
+  copy_tags_to_snapshot     = true
+  backup_retention_period   = 1
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = var.skip_final_snapshot
+  final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.name_prefix}-aurora-final"
 
   serverlessv2_scaling_configuration {
     min_capacity = var.min_capacity
     max_capacity = var.max_capacity
+    # Only applies when min_capacity is 0 (Aurora auto-pause).
+    seconds_until_auto_pause = var.min_capacity == 0 ? var.seconds_until_auto_pause : null
   }
 
   tags = var.tags

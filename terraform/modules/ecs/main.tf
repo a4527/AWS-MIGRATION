@@ -223,6 +223,10 @@ resource "aws_ecs_service" "application" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  # Tasks inherit the service tags (including Owner).
+  enable_ecs_managed_tags = true
+  propagate_tags          = "SERVICE"
+
   lifecycle {
     # CD owns the deployed revision; Application Auto Scaling owns task count.
     # These configured values still apply when creating the service.

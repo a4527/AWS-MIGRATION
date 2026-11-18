@@ -58,8 +58,17 @@ Route53과 ACM HTTPS listener는 조건부로 생성한다. `domain_name`과 `ro
 ```text
 terraform/
 ├── environments/
-│   └── dev/
+│   ├── dev-data/          # 유지 계층: VPC·S3·Aurora
+│   │   ├── .terraform.lock.hcl
+│   │   ├── backend.tf.example
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   ├── providers.tf
+│   │   ├── terraform.tfvars.example
+│   │   └── variables.tf
+│   └── dev/               # 실습 계층: NAT·ECS·Redis 등
 │       ├── backend.tf.example
+│       ├── data.tf
 │       ├── main.tf
 │       ├── outputs.tf
 │       ├── providers.tf
@@ -73,52 +82,63 @@ terraform/
     ├── file-processor/
     ├── github-actions/
     ├── iam/
+    ├── nat/
     ├── s3/
     ├── security-groups/
     └── vpc/
 ```
 
-`terraform/environments/dev`는 루트 모듈이다. 실제 `terraform plan`과 `terraform apply`는 이 디렉터리에서 실행한다.
+루트 모듈은 두 개이고 state도 따로 둔다([DEC-008](../DECISIONS.md#결정-목록)). `terraform plan`과 `terraform apply`는 각 디렉터리에서 실행한다.
 
-`terraform/modules/*`는 재사용 가능한 하위 모듈이다. 하위 모듈은 단독으로 실행하는 영역이 아니라, `dev/main.tf`에서 호출될 때 실제 인프라 구성에 포함된다.
+`terraform/modules/*`는 재사용 가능한 하위 모듈이다. 하위 모듈은 단독으로 실행하는 영역이 아니라, 루트 모듈의 `main.tf`에서 호출될 때 실제 인프라 구성에 포함된다.
+
+## 유지 계층과 실습 계층
+
+실습이 끝날 때마다 비용이 큰 리소스는 지우고, 데이터는 남긴다.
+
+| 계층 | 디렉터리 | 리소스 | 수명 | 쉬는 동안 비용 |
+| --- | --- | --- | --- | --- |
+| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지(현재 규모 몇 센트). VPC·subnet·IGW·SG는 무료 |
+| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·ECR·IAM·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, GitHub Actions role | 실습마다 apply → destroy | 없음 |
+
+- Aurora는 `min_capacity = 0`이라 연결이 없으면 `seconds_until_auto_pause`(기본 300초) 뒤 컴퓨트를 멈춘다. 멈춘 동안은 스토리지만 과금되고, 첫 연결에서 다시 깨어나는 데 약 15초가 걸린다(AWS 설명 기준, 실측 전). ECS가 떠 있는 동안은 연결 풀이 연결을 유지하므로 멈추지 않는다.
+- 실습 계층은 유지 계층 리소스를 state가 아니라 이름·태그로 조회한다(`dev/data.tf`). 그래서 IAC-01에서 backend를 바꿔도 계층 간 연결이 바뀌지 않는다. 대신 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
+- 계층에 걸친 연결은 실습 계층이 만들고 지운다: NAT 경로(`aws_route`)는 유지 계층의 private route table에, `5432 from Application SG` 규칙은 유지 계층의 Aurora SG에 붙는다. 실습 계층을 지우면 Aurora로 들어오는 규칙이 없어진다.
+- Aurora 비밀번호는 SEC-01 전까지 두 계층의 `terraform.tfvars`에 같은 값으로 둔다.
+- 순서: 생성은 `dev-data` → `dev`, 삭제는 `dev`만. 유지 계층을 지우려면 `aurora_deletion_protection = false`를 먼저 apply하고, 기본값으로 최종 스냅샷(`<prefix>-aurora-final`)을 남긴다.
 
 ## 루트 모듈 역할
 
-`terraform/environments/dev/main.tf`는 개발 환경 전체를 조립한다.
+`terraform/environments/dev-data/main.tf`는 `vpc`, `s3`, `aurora` 모듈을 호출한다.
 
-현재 호출하는 모듈은 다음과 같다.
+`terraform/environments/dev/main.tf`는 실습 계층을 조립한다. 호출하는 모듈은 다음과 같다.
 
-- `vpc`
 - `ecr`
-- `s3`
+- `nat`
 - `iam`
 - `file_processor`
 - `security_groups`
 - `ecs`
 - `github_actions`
-- `aurora`
 - `elasticache`
 
-루트 모듈은 각 모듈의 output을 다른 모듈의 input으로 연결한다.
-
-예를 들어 VPC 모듈이 만든 subnet ID는 ECS, Aurora, ElastiCache 모듈로 전달된다.
+실습 계층은 유지 계층 리소스를 `data.tf`의 data source로 찾아 모듈 input으로 넘긴다.
 
 ```text
-module.vpc.public_subnet_ids
-  -> module.ecs.public_subnet_ids
-
-module.vpc.private_subnet_ids
-  -> module.ecs.private_subnet_ids
-
-module.vpc.database_subnet_ids
-  -> module.aurora.database_subnet_ids
-  -> module.elasticache.database_subnet_ids
+data.aws_subnets.public    -> local.public_subnet_ids   -> module.ecs, module.nat
+data.aws_subnets.private   -> local.private_subnet_ids  -> module.ecs
+data.aws_subnets.database  -> local.database_subnet_ids -> module.elasticache
+data.aws_route_table.private -> module.nat (NAT 기본 경로)
+data.aws_security_group.aurora -> module.security_groups (5432 허용 규칙)
+data.aws_rds_cluster.this  -> module.ecs.database_url, database_username
 ```
 
-S3 모듈이 만든 bucket ARN은 IAM 모듈로 전달되고, IAM 모듈이 만든 policy ARN은 ECS task role에 연결된다.
+`aws_subnets`는 순서를 보장하지 않으므로 ID를 정렬해 쓴다. NAT는 정렬 후 첫 public subnet에 둔다.
+
+S3 bucket ARN은 IAM 모듈로 전달되고, IAM 모듈이 만든 policy ARN은 ECS task role에 연결된다.
 
 ```text
-module.s3.bucket_arn
+data.aws_s3_bucket.files.arn
   -> module.iam.file_bucket_arn
   -> module.iam.application_files_policy_arn
   -> module.ecs.app_policy_arns
@@ -128,8 +148,8 @@ module.s3.bucket_arn
 또한 S3 bucket ID와 ARN은 file processor Lambda 모듈로 전달된다.
 
 ```text
-module.s3.bucket_id
-module.s3.bucket_arn
+data.aws_s3_bucket.files.id
+data.aws_s3_bucket.files.arn
   -> module.file_processor
   -> Lambda permission
   -> S3 bucket notification
@@ -156,7 +176,7 @@ module.ecs.execution_role_arn
 
 `terraform/environments/dev/main.tf`는 하위 모듈을 직접 구현하는 파일이 아니라, 하위 모듈을 호출하고 서로 필요한 값을 넘겨주는 조립 파일이다.
 
-하위 모듈끼리는 직접 서로를 참조하지 않는다. 예를 들어 ECS 모듈 안에서 `module.s3.bucket_name`을 직접 읽지 않는다. 대신 루트 모듈이 S3 모듈의 output을 받아 ECS 모듈 input으로 넘긴다.
+하위 모듈끼리는 직접 서로를 참조하지 않는다. 예를 들어 ECS 모듈 안에서 bucket 이름을 직접 찾지 않는다. 대신 루트 모듈이 S3 bucket data source 값을 ECS 모듈 input으로 넘긴다.
 
 ```text
 하위 모듈 A
@@ -205,20 +225,23 @@ terraform/modules/ecs/main.tf
 - Route53/ACM처럼 특정 환경에만 필요한 루트 리소스를 조건부로 만든다.
 - 최종적으로 개발 환경 전체 리소스 그래프를 만든다.
 
-현재 주요 연결은 다음과 같다.
+실습 계층(`dev/main.tf`)의 현재 주요 연결은 다음과 같다. 유지 계층(`dev-data/main.tf`)은 `module.vpc -> module.aurora`만 연결한다.
 
 ```text
-module.vpc
+data.aws_vpc / data.aws_subnets / data.aws_route_table (유지 계층)
+  -> module.nat
   -> module.security_groups
   -> module.ecs
-  -> module.aurora
   -> module.elasticache
+
+data.aws_security_group.aurora (유지 계층)
+  -> module.security_groups 5432 허용 규칙
 
 module.ecr
   -> module.ecs container_image
   -> module.github_actions deploy policy
 
-module.s3
+data.aws_s3_bucket.files (유지 계층)
   -> module.iam application_files policy
   -> module.file_processor S3 notification
   -> module.ecs S3_BUCKET environment variable
@@ -226,8 +249,11 @@ module.s3
 module.iam
   -> module.ecs task role policy attachment
 
-module.aurora
+data.aws_rds_cluster.this (유지 계층)
   -> module.ecs DB_URL environment variable
+
+module.nat
+  -> module.ecs (depends_on)
 
 module.elasticache
   -> module.ecs REDIS_HOST environment variable
@@ -272,15 +298,29 @@ fileshare-dev-application-files
 
 ## 공통 태그
 
-루트 모듈은 `common_tags`를 만들어 대부분의 리소스에 전달한다.
+**모든 리소스에 `Owner` 태그가 있어야 한다.** 이 AWS 계정은 Owner 태그가 없는 리소스를 삭제할 수 있다([DEC-009](../DECISIONS.md#결정-목록)). 그래서 Owner는 두 군데서 붙인다.
+
+- provider `default_tags`: 태그를 지원하는 모든 리소스에 `Project`·`Environment`·`ManagedBy`·`Owner`를 붙인다. 유지 계층은 `Layer = data`도 붙인다.
+- 루트 모듈의 `common_tags`: 모듈에 넘기는 태그다. `merge(var.tags, {...})`에서 `Owner = var.owner`를 마지막에 넣는다. 그래서 `tags`에 다른 Owner를 넣어도 덮어써지지 않는다. 리소스 단위 태그는 provider 기본 태그보다 우선하기 때문에 이 순서가 필요하다.
 
 ```text
 Project     = fileshare
 Environment = dev
 ManagedBy   = terraform
+Owner       = <var.owner>
 ```
 
-`terraform.tfvars`의 `tags` 값은 여기에 병합된다. 예를 들어 `Owner = "portfolio"`를 넣으면 모든 주요 리소스에 함께 붙는다.
+`owner` 변수는 기본값이 없고 빈 값이면 validation이 실패한다. 실제 값은 gitignore된 `terraform.tfvars`에만 둔다.
+
+Terraform 밖에서 생기는 리소스도 Owner를 갖게 했다.
+
+| 리소스 | 방법 |
+| --- | --- |
+| Fargate task | ECS service의 `propagate_tags = "SERVICE"`, `enable_ecs_managed_tags = true` |
+| CD가 등록하는 task definition revision | workflow가 현재 revision의 태그를 `--include TAGS`로 읽어 새 revision에 붙인다. Owner가 없으면 배포를 실패시킨다. deploy role에 등록 시에만 쓸 수 있는 `ecs:TagResource`를 준다 |
+| Aurora 자동 백업·최종 스냅샷 | `copy_tags_to_snapshot = true` |
+
+AWS가 태그를 지원하지 않는 부속 설정은 Owner를 붙일 수 없다. route table association, S3 bucket 하위 설정, IAM policy attachment, Lambda permission, S3 notification, `aws_route`, scaling policy, ECR lifecycle policy가 여기에 해당한다. ECR 이미지 자체에도 AWS 태그를 붙일 수 없다. 반면 repository는 태그된다.
 
 ## Provider
 
@@ -301,7 +341,9 @@ required_providers {
 }
 ```
 
-배포 리전은 `var.aws_region`으로 받는다. 기본값은 `ap-northeast-2`이다.
+배포 리전은 `var.aws_region`으로 받는다. 기본값은 `us-east-1`이다(PORT-01, [DEC-006](../DECISIONS.md#결정-목록)).
+
+유지 계층(`dev-data`)은 Aurora 자동 일시정지 설정(`seconds_until_auto_pause`) 때문에 AWS provider `>= 5.80, < 6.0`을 요구하고 archive provider는 쓰지 않는다.
 
 ## VPC 설계
 
@@ -331,7 +373,7 @@ private subnet   10.20.10.0/24, 10.20.11.0/24
 database subnet  10.20.20.0/24, 10.20.21.0/24
 ```
 
-AZ는 기본적으로 `ap-northeast-2a`, `ap-northeast-2c`를 사용한다.
+AZ는 기본적으로 `us-east-1a`, `us-east-1b`를 사용한다.
 
 ## Public Subnet
 
@@ -372,6 +414,8 @@ Database subnet에는 인터넷으로 나가는 기본 route를 두지 않는다
 - 네트워크 계층과 security group 계층에서 이중으로 접근 범위를 줄인다.
 
 ## NAT Gateway
+
+NAT Gateway는 실습 계층의 `nat` 모듈이 만든다. 유지 계층의 private route table에는 경로가 없고, 실습 계층이 `0.0.0.0/0 -> NAT` 경로를 추가했다가 destroy 때 지운다. 쉬는 동안 NAT 비용이 나가지 않게 하기 위해서다.
 
 현재 개발 환경은 비용 절감을 위해 NAT Gateway 1개로 시작한다.
 
@@ -438,7 +482,7 @@ Outbound:
 
 ### Aurora SG
 
-Aurora SG는 PostgreSQL 포트만 허용한다.
+Aurora SG는 유지 계층의 Aurora 모듈이 만들고, 허용 규칙은 실습 계층의 security-groups 모듈이 `aws_vpc_security_group_ingress_rule`로 붙인다. PostgreSQL 포트만 허용한다.
 
 ```text
 Inbound:
@@ -1132,26 +1176,22 @@ Aurora 모듈은 PostgreSQL 호환 DB를 만든다.
 - Aurora PostgreSQL cluster
 - Aurora cluster instance
 
-Aurora는 database subnet에 배치된다.
+Aurora 모듈은 유지 계층에서 호출한다. Aurora는 database subnet에 배치된다.
 
 ```text
 database_subnet_ids = module.vpc.database_subnet_ids
 ```
 
-Security group은 Aurora SG만 붙는다.
+Security group은 모듈이 만든 Aurora SG만 붙는다. 이 SG에는 모듈 안에서 규칙을 두지 않는다. 실습 계층이 application SG에서 오는 5432 허용 규칙을 붙인다.
 
-```text
-security_group_ids = [module.security_groups.aurora_security_group_id]
-```
-
-Aurora SG는 application SG에서 오는 5432만 허용한다.
+삭제 보호는 `deletion_protection`(기본 true)과 최종 스냅샷(`skip_final_snapshot` 기본 false, 식별자 `<prefix>-aurora-final`)으로 한다.
 
 ## Aurora Endpoint
 
 Spring Boot의 DB URL은 Aurora writer endpoint를 사용한다.
 
 ```hcl
-database_url = "jdbc:postgresql://${module.aurora.cluster_endpoint}:5432/${var.aurora_database_name}"
+database_url = "jdbc:postgresql://${data.aws_rds_cluster.this.endpoint}:5432/${data.aws_rds_cluster.this.database_name}"
 ```
 
 결과 형태는 다음과 같다.
@@ -1167,11 +1207,12 @@ jdbc:postgresql://<aurora-writer-endpoint>:5432/fileshare
 Aurora 모듈은 Serverless v2 scaling 설정을 받는다.
 
 ```text
-aurora_min_capacity = 0.5
-aurora_max_capacity = 2
+aurora_min_capacity             = 0
+aurora_max_capacity             = 2
+aurora_seconds_until_auto_pause = 300
 ```
 
-개발 환경에서는 최소 용량을 낮게 두어 비용을 줄인다. 운영 환경에서는 요청량과 latency 요구사항에 맞춰 최소 ACU를 올려 cold scaling 영향을 줄일 수 있다.
+개발 환경은 최소 용량 0으로 자동 일시정지를 쓴다([DEC-008](../DECISIONS.md#결정-목록)). 멈춘 동안은 컴퓨트 비용이 없고, 0.5 ACU로 계속 두면 us-east-1 기준 월 약 $44가 나간다(2026-11-18 서드파티 가격 자료 기준, 공식 가격 미확인). 일시정지에는 엔진 버전 조건(16.3 이상)이 있다. 엔진 버전은 16.15다. 2026-11-18 us-east-1에서 16.6은 limitless 변형만 남아 있어 온프레미스와 같은 메이저 16의 최신 마이너로 바꿨다. 운영 환경에서는 재개 지연을 피하기 위해 최소 ACU를 0보다 크게 둔다.
 
 ## ElastiCache 모듈
 
@@ -1187,10 +1228,10 @@ at_rest_encryption_enabled = true
 transit_encryption_enabled = true
 ```
 
-Redis는 database subnet에 배치된다.
+Redis는 database subnet에 배치된다. 실습 계층에 있으므로 subnet은 data source로 받는다.
 
 ```text
-database_subnet_ids = module.vpc.database_subnet_ids
+database_subnet_ids = local.database_subnet_ids
 ```
 
 Security group은 Redis SG만 붙는다.
@@ -1217,13 +1258,9 @@ Spring Boot의 `application-redis.yml`은 이 값을 읽어 Redis SSL 연결을 
 
 Terraform은 명시적인 `depends_on`이 없어도 대부분의 의존성을 참조 관계로 계산한다.
 
-예를 들어 ECS 모듈은 Aurora endpoint를 입력값으로 받는다.
+예를 들어 ECS 모듈은 Aurora endpoint를 data source로 받는다. 계층 사이에는 Terraform 의존성이 없으므로 유지 계층을 먼저 apply해야 한다. 없으면 data source 조회가 plan 단계에서 실패한다.
 
-```hcl
-database_url = "jdbc:postgresql://${module.aurora.cluster_endpoint}:5432/${var.aurora_database_name}"
-```
-
-이 참조 때문에 Terraform은 Aurora cluster endpoint가 계산된 뒤 ECS task definition 값을 만들 수 있다.
+실습 계층의 ECS 모듈은 `depends_on = [module.nat]`로 NAT 경로가 생긴 뒤 만들어지고, destroy 때는 ECS가 먼저 지워진 뒤 NAT가 지워진다. task가 ECR 이미지를 받으려면 NAT 경로가 필요하기 때문이다.
 
 ECS service는 listener와 execution role attachment를 명시적으로 기다린다.
 
@@ -1238,9 +1275,7 @@ depends_on = [
 
 ## Terraform 변수
 
-개발 환경 변수는 `terraform/environments/dev/variables.tf`에 정의되어 있다.
-
-주요 변수는 다음과 같다.
+유지 계층 변수(`dev-data/variables.tf`):
 
 ```text
 aws_region
@@ -1253,6 +1288,26 @@ private_subnets
 database_subnets
 file_bucket_name
 force_destroy_buckets
+aurora_database_name
+aurora_master_username
+aurora_master_password
+aurora_engine_version
+aurora_instance_count
+aurora_min_capacity
+aurora_max_capacity
+aurora_seconds_until_auto_pause
+aurora_deletion_protection
+aurora_skip_final_snapshot
+tags
+```
+
+실습 계층 변수(`dev/variables.tf`):
+
+```text
+aws_region
+project_name
+environment
+file_bucket_name
 ecs_backend_image_tag
 ecs_container_port
 ecs_task_cpu
@@ -1263,14 +1318,7 @@ app_jwt_secret
 github_repository
 github_branch
 github_oidc_thumbprints
-aurora_database_name
-aurora_master_username
 aurora_master_password
-aurora_engine_version
-aurora_instance_count
-aurora_min_capacity
-aurora_max_capacity
-aurora_skip_final_snapshot
 redis_node_type
 redis_num_cache_clusters
 tags
@@ -1286,13 +1334,13 @@ aurora_master_password = "replace-with-strong-development-password"
 app_jwt_secret         = "replace-with-strong-development-jwt-secret"
 ```
 
-S3 bucket 이름은 전 세계에서 유일해야 한다.
+S3 bucket 이름은 전 세계에서 유일해야 한다. `file_bucket_name`과 `aurora_master_password`는 두 계층에서 같은 값을 쓴다.
 
 ## Terraform Output
 
-`outputs.tf`는 배포 후 확인하거나 CI/CD에서 사용할 값을 노출한다.
+`outputs.tf`는 배포 후 확인하거나 CI/CD에서 사용할 값을 노출한다. 유지 계층은 VPC·subnet·private route table ID, bucket 이름, Aurora 식별자·endpoint·SG ID를 출력한다.
 
-주요 output은 다음과 같다.
+실습 계층의 주요 output은 다음과 같다.
 
 ```text
 vpc_id
@@ -1327,14 +1375,18 @@ curl http://<application_alb_dns_name>/api/health
 
 ## 실행 순서
 
-개발 환경 Terraform 실행은 다음 순서로 진행한다.
+개발 환경 Terraform 실행은 다음 순서로 진행한다. 유지 계층은 처음 한 번만 만든다.
 
 ```bash
-cd terraform/environments/dev
+cd terraform/environments/dev-data
 cp terraform.tfvars.example terraform.tfvars
-terraform init
-terraform plan
-terraform apply
+terraform init && terraform plan && terraform apply
+
+cd ../dev
+cp terraform.tfvars.example terraform.tfvars
+terraform init && terraform plan && terraform apply
+# 실습 종료
+terraform destroy   # dev만 지운다
 ```
 
 단, ECS service가 정상 기동하려면 ECR에 backend image가 있어야 한다.
@@ -1362,8 +1414,8 @@ terraform output backend_ecr_repository_url
 이미지 push 흐름은 일반적으로 다음과 같다.
 
 ```bash
-aws ecr get-login-password --region ap-northeast-2 \
-  | docker login --username AWS --password-stdin <account-id>.dkr.ecr.ap-northeast-2.amazonaws.com
+aws ecr get-login-password --region us-east-1 \
+  | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
 
 docker build -t fileshare-backend ./backend
 docker tag fileshare-backend:latest <repository-url>:latest
@@ -1413,12 +1465,12 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 개발 비용을 낮추려면 다음을 검토할 수 있다.
 
 - `ecs_desired_count = 1`
-- Aurora 최소 ACU 낮게 유지
+- Aurora 최소 ACU 0(자동 일시정지)
 - Redis node type을 작은 값으로 유지
 - CloudWatch log retention 짧게 유지
-- 사용하지 않을 때 `terraform destroy`
+- 사용하지 않을 때 실습 계층(`dev`)만 `terraform destroy`
 
-다만 `terraform destroy`는 데이터 삭제를 동반할 수 있으므로 S3와 DB 보존 정책을 먼저 확인해야 한다.
+유지 계층을 남겨 둔 동안의 비용은 S3·Aurora 스토리지와 Aurora 자동 백업(보존 1일)이다. 현재 데이터 규모에서는 월 몇 센트 수준으로 추정하며, 실제 청구액은 PORT-01의 예산 알림과 Cost Explorer로 확인한다.
 
 ## 보안 관점
 
@@ -1478,7 +1530,8 @@ ALB target health
 - VPC endpoint
 - 실제 바이러스 검사 엔진 연동
 - Lambda 후처리 결과와 DB 상태 동기화
-- 로컬에서 Aurora에 접근하는 데이터 이전 경로 (MIG-01, [데이터 이전 제안](../proposals/DATA-MIGRATION.md))
+- 로컬에서 Aurora에 접근하는 경로가 없다. MIG-01에서 데이터 이전을 하지 않기로 해서([DEC-007](../DECISIONS.md#결정-목록)) 만들지 않았다. DB를 직접 조회해야 하면 ECS task나 별도 경로를 추가로 정한다.
+- 계층 간 값(bucket 이름·DB 비밀번호)을 두 tfvars에 중복해서 둔다. 비밀번호 중복은 SEC-01에서 Secrets Manager 참조로 없앤다.
 
 ## 최종 요약
 

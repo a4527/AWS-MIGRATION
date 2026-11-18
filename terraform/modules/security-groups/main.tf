@@ -58,22 +58,15 @@ resource "aws_security_group" "application" {
   })
 }
 
-resource "aws_security_group" "aurora" {
-  name        = "${var.name_prefix}-aurora"
-  description = "Allows PostgreSQL traffic from the application runtime."
-  vpc_id      = var.vpc_id
+resource "aws_vpc_security_group_ingress_rule" "aurora_from_application" {
+  security_group_id            = var.aurora_security_group_id
+  description                  = "PostgreSQL from application"
+  ip_protocol                  = "tcp"
+  from_port                    = 5432
+  to_port                      = 5432
+  referenced_security_group_id = aws_security_group.application.id
 
-  ingress {
-    description     = "PostgreSQL from application"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.application.id]
-  }
-
-  tags = merge(var.tags, {
-    Name = "${var.name_prefix}-aurora"
-  })
+  tags = var.tags
 }
 
 resource "aws_security_group" "redis" {

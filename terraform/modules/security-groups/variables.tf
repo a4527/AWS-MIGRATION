@@ -8,6 +8,11 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "aurora_security_group_id" {
+  description = "Aurora security group owned by the persistent data layer."
+  type        = string
+}
+
 variable "tags" {
   description = "Common resource tags."
   type        = map(string)

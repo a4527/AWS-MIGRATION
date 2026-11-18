@@ -1,0 +1,28 @@
+# AWS(ECS) 실행 조건을 로컬 Compose에서 흉내 낸다. V-LOC 전용이며 실제 AWS를 호출하지 않는다.
+#   docker compose -f docker-compose.yml -f docker-compose.aws-local.yml up -d --build
+# - backend: ECS와 같은 프로필(postgres,redis,s3)·CPU 0.5·메모리 1GiB.
+# - S3: AWS SDK의 AWS_ENDPOINT_URL_S3로 MinIO를 가리킨다. SDK가 가상 호스트 방식
+#   (<bucket>.minio)으로 요청하므로 MinIO에 MINIO_DOMAIN과 bucket 이름 alias를 준다.
+# - 자격 증명은 MinIO 계정이다. 사용자 ~/.aws는 컨테이너에 들어가지 않는다.
+# 로컬에서 재현하지 않는 것: ElastiCache TLS(REDIS_SSL_ENABLED), IAM task role, Aurora 엔진.
+services:
+  minio:
+    environment:
+      MINIO_DOMAIN: minio
+    networks:
+      default:
+        aliases:
+          - ${AWS_LOCAL_BUCKET:-fileshare-local}.minio
+
+  backend:
+    environment:
+      SPRING_PROFILES_ACTIVE: postgres,redis,s3
+      AWS_REGION: us-east-1
+      S3_BUCKET: ${AWS_LOCAL_BUCKET:-fileshare-local}
+      S3_OBJECT_PREFIX: files/
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      AWS_EC2_METADATA_DISABLED: "true"
+    cpus: 0.5
+    mem_limit: 1g

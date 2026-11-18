@@ -10,6 +10,7 @@
 | V-IDEM | `Idempotency-Key` 동작 | 온프레미스, AWS | ONP-03, FILE-05 |
 | V-FAIL | Redis·PostgreSQL·MinIO·backend 장애 주입 | 온프레미스 | ONP-03, FILE-01/02 |
 | V-ADMIN | 관리자 고아 객체 점검 | 온프레미스, AWS | ONP-03, FILE-01 |
+| V-LOC | AWS 전용 경로(S3 SDK·컨테이너 한도·DB 재개 지연·Lambda·CD 태그) 사전 확인 | 로컬 | PORT-01, VERIFY-01 선행 |
 | V-MIG | 데이터 이전 전후 비교 | AWS | MIG-02 |
 | V-AWS | AWS 진입점·후처리·장애 복구·알람 | AWS | VERIFY-01/02 |
 | V-PERF | smoke 성능·자원 사용 | 온프레미스, AWS | PERF-01, FILE-04 |
@@ -305,7 +306,7 @@ api "$ADMIN_TOKEN" "$BASE_URL/api/admin/storage/orphans?minAgeMinutes=$MIN_AGE" 
 
 ## 7. 데이터 이전 검증
 
-[데이터 이전 방식](../proposals/DATA-MIGRATION.md)이 MIG-01에서 확정된 뒤 실행한다. 아래는 방식과 무관한 공통 판정이다.
+MIG-01에서 데이터를 옮기지 않기로 해서([DEC-007](../DECISIONS.md#결정-목록)) 현재 범위에서는 실행하지 않는다. 데이터 이전을 다시 범위에 넣을 때 쓰는 공통 판정이다.
 
 ### V-MIG-01 이전 전 기준값 (온프레미스)
 
@@ -328,6 +329,197 @@ mc_cmd "mc ls --recursive local/${MINIO_BUCKET:-files}" | wc -l >> mig-before.tx
 - 이전 후 새 업로드의 `fileId`가 기존 최대값보다 크다(시퀀스 보존).
 - 복사한 객체에도 Lambda 태그(`scan-status` 등)가 기록된다.
 
+## 7A. AWS 배포 전 로컬 검증
+
+AWS에 apply하기 전에, 온프레미스 시나리오(V-ONP~V-ADMIN)로는 확인되지 않는 AWS 전용 경로를 로컬에서 먼저 확인한다. 비용이 없고 실제 AWS를 호출하지 않는다. 온프레미스 기준선(ONP-01~03)이 이미 통과한 상태를 전제로 한다.
+
+| ID | 확인 대상 | AWS에서 달라지는 점 |
+| --- | --- | --- |
+| V-LOC-01 | 자동 테스트·Terraform 정적 검사 | 리전 기본값 변경, 계층 분리, Owner 태그 |
+| V-LOC-02 | `s3` 프로필 기능 | ECS는 MinIO 대신 AWS SDK S3 경로(`S3FileStorage`), 키 접두사 `files/` |
+| V-LOC-03 | 컨테이너 실행 조건 | Fargate 0.5 vCPU·1GiB, 비root, ALB health check `/api/health` |
+| V-LOC-04 | DB 재개 지연 | Aurora가 0 ACU로 일시정지돼 있으면 첫 연결이 재개될 때까지 기다린다 |
+| V-LOC-05 | Lambda 후처리 | S3 이벤트로 객체 태그 기록 |
+| V-LOC-06 | CD task definition 태그 유지 | 새 revision이 Owner 태그를 잃으면 정리 정책에 삭제될 수 있다 |
+
+로컬에서 재현하지 않는 것: ElastiCache TLS 연결(`REDIS_SSL_ENABLED=true`), IAM task role 권한, Aurora 엔진 자체의 재개 시간, ALB·NAT 네트워크. 이것들은 [8. AWS 검증](#8-aws-검증)에서 본다.
+
+공통 준비([0. 공통 준비](#0-공통-준비))에 더해 다음을 쓴다. `docker-compose.aws-local.yml`이 backend를 ECS와 같은 프로필·자원 한도로 바꾸고 S3 요청을 MinIO로 보낸다. 컨테이너에는 사용자 `~/.aws` 자격 증명이 들어가지 않는다.
+
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.aws-local.yml"
+AWS_LOCAL_BUCKET=${AWS_LOCAL_BUCKET:-fileshare-local}
+```
+
+### V-LOC-01 자동 테스트와 Terraform 정적 검사
+
+WSL에 Java가 없으면 Temurin 17을 받아 `JAVA_HOME`과 `PATH`에 지정한 뒤 실행한다. Docker는 필요 없다.
+
+```bash
+(cd backend && ./gradlew test --no-daemon)
+terraform fmt -check -recursive terraform
+for env in dev-data dev; do
+  terraform -chdir=terraform/environments/$env init -backend=false -input=false > /dev/null
+  terraform -chdir=terraform/environments/$env validate
+done
+terraform -chdir=terraform/environments/dev-data plan -input=false | grep -E '^Plan:'
+```
+
+판정:
+
+- 테스트 실패·오류가 0이다.
+- fmt 차이가 없고 두 계층 모두 `Success! The configuration is valid.`가 나온다.
+- 유지 계층을 apply하기 전에는 `Plan: 27 to add, 0 to change, 0 to destroy.`가 나온다. 실습 계층(`dev`) plan은 유지 계층 리소스를 조회하므로 apply 뒤에만 실행한다.
+- plan은 AWS 조회만 하고 리소스를 만들지 않는다.
+
+### V-LOC-02 `s3` 프로필 기능
+
+```bash
+mc_cmd "mc mb --ignore-existing local/$AWS_LOCAL_BUCKET"
+$DC up -d --build minio backend
+$DC exec -T backend env | grep -E '^(SPRING_PROFILES_ACTIVE|AWS_ENDPOINT_URL_S3|S3_BUCKET)='
+curl -s "$BASE_URL/api/health" | jq
+```
+
+그다음 같은 셸에서 [V-FUNC-01](#v-func-01-회원가입로그인사용자-조회)~[V-FUNC-04](#v-func-04-삭제)와 [V-IDEM-01](#v-idem-01-같은-키-재전송)을 그대로 실행한다. 객체 확인은 V-DATA-01 대신 아래 명령을 쓴다.
+
+```bash
+STORAGE_PATH=$(psql_q "select storage_path from files where id=$FILE_ID;")
+echo "$STORAGE_PATH"
+mc_cmd "mc stat local/$AWS_LOCAL_BUCKET/$STORAGE_PATH"
+mc_cmd "mc cat local/$AWS_LOCAL_BUCKET/$STORAGE_PATH" | sha256sum
+$DC logs backend --since 10m | grep -iE 'SdkClientException|Unable to load credentials|UnknownHost' || echo "SDK 오류 없음"
+```
+
+판정:
+
+- backend 환경변수에 `postgres,redis,s3`가 있고, health가 `UP`이다.
+- V-FUNC·V-IDEM-01 판정이 온프레미스와 같다.
+- `storage_path`가 `files/<uuid>.<확장자>`이다. 같은 키의 객체가 `$AWS_LOCAL_BUCKET`에 있고 해시가 원본과 같다.
+- backend 로그에 SDK 자격 증명·호스트 해석 오류가 없다.
+
+실패할 때 먼저 볼 것:
+
+- `UnknownHostException: <bucket>.minio`이면 bucket 이름과 MinIO alias가 다른 것이다. `AWS_LOCAL_BUCKET`을 compose와 셸에서 같은 값으로 쓴다.
+- `NoSuchBucket`이면 `mc mb`를 빠뜨린 것이다. `s3` 프로필은 bucket을 만들지 않는다. AWS에서는 유지 계층 Terraform이 만든다.
+
+### V-LOC-03 컨테이너 실행 조건
+
+V-LOC-02 스택에서 실행한다.
+
+```bash
+$DC exec -T backend id -u
+docker inspect -f 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' "$($DC ps -q backend)"
+docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' "$($DC ps -q backend)"
+$DC exec -T backend bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /api/health HTTP/1.0\r\n\r\n" >&3; head -1 <&3'
+```
+
+판정:
+
+- uid가 `10001`이다(비root).
+- `cpus=500000000 mem=1073741824`이고, `oom=false`, `restarts=0`이다.
+- V-LOC-02를 마친 뒤 메모리 사용량이 1GiB 한도 안이다. 수치를 기록해 둔다.
+- nginx를 거치지 않고 컨테이너 8080 포트에서 `/api/health`가 `200`이다. ALB target group은 이 경로를 직접 호출한다.
+
+### V-LOC-04 DB 재개 지연
+
+Aurora는 0 ACU로 멈춰 있다가 첫 연결이 오면 재개한다. 그동안 연결은 응답 없이 기다린다. PostgreSQL 컨테이너를 `pause`해 같은 상황을 만든다. 일시정지 길이 20초는 재개 시간 추정값(약 15초)보다 조금 길게 잡은 값이다.
+
+**4-1. 실행 중 요청**
+
+```bash
+EMAIL4="loc4-$RUN_ID@example.com"; signup "$EMAIL4" loc4 > /dev/null
+docker compose pause postgres
+( sleep 20; docker compose unpause postgres ) &
+time (login "$EMAIL4" | cut -c1-20)
+wait
+```
+
+**4-2. 기동 중 DB가 멈춰 있을 때**
+
+```bash
+$DC stop backend
+docker compose pause postgres
+$DC start backend
+sleep 20; docker compose unpause postgres
+for i in $(seq 1 30); do curl -sf "$BASE_URL/actuator/health" > /dev/null && { echo "UP after ${i}x5s"; break; }; sleep 5; done
+$DC ps backend
+$DC logs backend --since 3m | grep -iE 'HikariPool|Connection is not available|APPLICATION FAILED' | head
+```
+
+판정:
+
+- 4-1: 로그인이 실패하지 않고 토큰을 받는다. 걸린 시간이 약 20초이고 30초(Hikari 기본 `connectionTimeout`) 안이다.
+- 4-2: backend가 재시작 없이 `UP`이 되고 컨테이너 상태가 running이다.
+- 실패하면 그 결과 자체를 기록한다. AWS에서 같은 문제가 생기면 apply 전에 다음 중 하나로 고친다: Hikari 대기 시간 조정, 최소 ACU를 0보다 크게 설정, 실습 시작 전 DB 미리 깨우기.
+
+### V-LOC-05 Lambda 후처리
+
+Lambda 핸들러를 로컬 Python에서 실행한다. S3 대신 MinIO(path 방식)를 쓴다. 임시 설정 파일을 쓰므로 사용자 `~/.aws`와 실제 AWS 계정은 사용하지 않는다.
+
+```bash
+LT=$(mktemp -d)
+printf '[default]\ns3 =\n    addressing_style = path\n' > "$LT/config"
+mc_cmd "echo clean | mc pipe local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.txt && echo x | mc pipe local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.sh"
+jq -n --arg b "$AWS_LOCAL_BUCKET" --arg r "$RUN_ID" '{Records: [
+  {eventName:"ObjectCreated:Put", s3:{bucket:{name:$b}, object:{key:("files/loc5-"+$r+".txt")}}},
+  {eventName:"ObjectCreated:Put", s3:{bucket:{name:$b}, object:{key:("files/loc5-"+$r+".sh")}}},
+  {eventName:"ObjectRemoved:Delete", s3:{bucket:{name:$b}, object:{key:"files/ignored.txt"}}}]}' > "$LT/event.json"
+
+env -u AWS_PROFILE AWS_CONFIG_FILE="$LT/config" AWS_SHARED_CREDENTIALS_FILE=/dev/null \
+  AWS_ACCESS_KEY_ID="${MINIO_ROOT_USER:-minioadmin}" AWS_SECRET_ACCESS_KEY="${MINIO_ROOT_PASSWORD:-minioadmin}" \
+  AWS_DEFAULT_REGION=us-east-1 AWS_ENDPOINT_URL_S3="http://localhost:${MINIO_API_PORT:-9000}" AWS_EC2_METADATA_DISABLED=true \
+  uv run --no-project --with boto3 python -c '
+import json, sys
+sys.path.insert(0, "terraform/functions/file-processor")
+import handler
+print(json.dumps(handler.lambda_handler(json.load(open(sys.argv[1])), None), indent=2))' "$LT/event.json"
+
+mc_cmd "mc tag list local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.txt; mc tag list local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.sh"
+rm -rf "$LT"
+```
+
+판정:
+
+- `processed`에 2건이 있고 `ObjectRemoved` 이벤트는 건너뛴다.
+- `.txt`: `scan-status=CLEAN`, `processing-status=COMPLETED`, `metadata-size=6`.
+- `.sh`: `scan-status=FAILED`, `processing-status=QUARANTINED`.
+- 다섯 태그(`scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`)가 모두 있다.
+
+### V-LOC-06 CD task definition 태그 유지
+
+[CI/CD workflow](../../.github/workflows/backend-ci-cd.yml)의 "Read current ECS task definition" 단계와 같은 jq를 예시 JSON에 적용한다.
+
+```bash
+CT=$(mktemp -d)
+cat > "$CT/describe.json" <<'JSON'
+{"taskDefinition":{"family":"fileshare-dev-backend","containerDefinitions":[{"name":"backend","image":"old"}]},
+ "tags":[{"key":"Owner","value":"example-owner"},{"key":"Project","value":"fileshare"}]}
+JSON
+owner_check() { jq -e '.tags | any(.key == "Owner" and (.value | length > 0))' "$1" > /dev/null && echo pass || echo refuse; }
+
+jq '.taskDefinition + {tags: (.tags // [])}' "$CT/describe.json" > "$CT/with.json"
+jq -c '{family, tags}' "$CT/with.json"; owner_check "$CT/with.json"
+
+jq 'del(.tags)' "$CT/describe.json" | jq '.taskDefinition + {tags: (.tags // [])}' > "$CT/none.json"
+owner_check "$CT/none.json"
+
+jq '.tags = [{"key":"Owner","value":""}]' "$CT/describe.json" | jq '.taskDefinition + {tags: (.tags // [])}' > "$CT/empty.json"
+owner_check "$CT/empty.json"
+rm -rf "$CT"
+```
+
+판정: 태그가 있는 경우 `family`와 태그 2개가 유지되고 `pass`가 나온다. 태그가 없거나 Owner 값이 빈 경우는 `refuse`가 나온다(workflow는 여기서 실패한다). 렌더·배포 action이 `tags`를 그대로 등록하는지는 첫 CD 실행에서 확인한다.
+
+### V-LOC 정리
+
+```bash
+docker compose up -d --build minio backend      # override 없이 다시 만들어 minio 프로필로 되돌린다
+docker compose exec -T backend env | grep '^SPRING_PROFILES_ACTIVE='
+```
+
+판정: `postgres,redis,minio`로 돌아온다. `$AWS_LOCAL_BUCKET` bucket과 V-LOC 계정·파일은 로컬 데이터라 남겨도 된다. 지우려면 `mc_cmd "mc rb --force local/$AWS_LOCAL_BUCKET"`를 실행한다.
+
 ## 8. AWS 검증
 
 [AWS 배포](DEPLOYMENT.md#4-aws-배포) 이후 실행한다. 비용이 발생하므로 PORT-01의 예산·정리 조건 안에서만 수행한다.
@@ -335,7 +527,7 @@ mc_cmd "mc ls --recursive local/${MINIO_BUCKET:-files}" | wc -l >> mig-before.tx
 ```bash
 cd terraform/environments/dev
 BASE_URL=$(terraform output -raw application_url)
-AWS_REGION=${AWS_REGION:-ap-northeast-2}
+AWS_REGION=${AWS_REGION:-us-east-1}
 FILE_BUCKET=$(terraform output -raw file_bucket_name)
 FILE_PROCESSOR_FUNCTION=$(terraform output -raw file_processor_function_name)
 FILE_PROCESSOR_LOG_GROUP=$(terraform output -raw file_processor_log_group_name)
@@ -449,6 +641,7 @@ docker stats --no-stream backend
 | ONP-01 | V-ONP-01 |
 | ONP-02 | V-FUNC-01~04, V-DATA-01~02 |
 | ONP-03 | V-IDEM-01~03, V-FAIL-01~05, V-ADMIN-01~02 |
+| AWS 유지 계층 apply 전 | V-LOC-01~06 |
 | MIG-02 | V-MIG-01~02 |
 | VERIFY-01 | V-AWS-01~03, AWS에서의 V-FUNC·V-IDEM |
 | VERIFY-02 | V-AWS-04~06, V-PERF-01 |

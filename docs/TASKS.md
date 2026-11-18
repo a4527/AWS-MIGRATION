@@ -43,10 +43,10 @@
 
 | ID | 우선순위 | 상태 | 작업·선행 조건 | 수용 기준·근거 |
 | --- | --- | --- | --- | --- |
-| PORT-01 | P0 | 예정 | AWS 검증 환경·예산·실험 범위 준비. 선행 없음 | 계정·리전·인증 방식, 실습 데이터, 비용 한도·알림, 리소스 보존/삭제 범위, 실험 중단·복구 조건을 비밀값 없이 기록하고 [AWS 런북](design/DEPLOYMENT.md)에 반영. VERIFY-01/02 실행 전에 확인 |
-| MIG-01 | P1 | 예정 | 데이터 이전 방식 결정. ONP-02 선행 | [데이터 이전 제안](proposals/DATA-MIGRATION.md)의 대안 중 하나를 합의해 [결정 목록](DECISIONS.md#결정-목록)에 기록한다. Aurora 접근 경로, `storage_path` 접두어(`files/`) 변환, 쓰기 중지 시간, 롤백 기준과 필요한 Terraform 변경을 확정한다. |
-| MIG-02 | P1 | 예정 | AWS 배포와 데이터 이전 실행. PORT-01·MIG-01·ONP-02 선행, SEC-01 권장 | [AWS 배포](design/DEPLOYMENT.md#4-aws-배포)로 인프라와 애플리케이션을 배포하고 [전환 절차](design/MIGRATION.md#전환-절차)대로 데이터를 옮긴 뒤 [데이터 이전 검증](design/VALIDATION.md#7-데이터-이전-검증) V-MIG를 통과한다. 이전 전후 건수·해시·샘플 다운로드 결과와 롤백 가능 여부를 기록한다. |
-| IAC-01 | P1 | 예정 | 원격 state와 환경 분리 보강. PORT-01 선행 | state bootstrap·접근 권한·암호화·버전 관리·잠금·복구 절차를 구현하고 동시 실행 잠금과 복구를 검증. Terraform 버전과 S3/DynamoDB 잠금 방식의 호환성을 확인하고 환경별 state 격리를 검증. [배포 기준](design/DEPLOYMENT.md)·[Terraform 안내](../terraform/README.md)에 반영 |
+| PORT-01 | P0 | 예정 (조건 확정·도구 설치 완료, 유지 계층 apply 남음) | AWS 검증 환경·예산·실험 범위 준비. 선행 없음 | 계정·리전·인증 방식, 실습 데이터, 비용 한도·알림, 리소스 보존/삭제 범위, 실험 중단·복구 조건을 비밀값 없이 기록하고 [AWS 런북](design/DEPLOYMENT.md#40-사전-준비)에 반영. VERIFY-01/02 실행 전에 확인. 2026-11-18: us-east-1·access key([DEC-006](DECISIONS.md#결정-목록)), 유지/실습 계층 분리([DEC-008](DECISIONS.md#결정-목록)) 확정. 예산 월 $10·이메일 알림, Owner 태그 강제([DEC-009](DECISIONS.md#결정-목록)), aws CLI 2.41.0·Terraform 1.17.2 설치. access key 로그인과 `aws sts get-caller-identity` 확인, 유지 계층 실제 plan(27개 생성) 완료. 남은 것: [V-LOC](design/VALIDATION.md#7a-aws-배포-전-로컬-검증) 로컬 사전 검증(01·06 통과, 02~05는 Docker 필요), 유지 계층 apply, Owner 비용 할당 태그 활성 여부(연결 계정이라 직접 조회 불가) 확인 |
+| MIG-01 | P1 | 완료 (이전 없음 결정) | 데이터 이전 방식 결정. ONP-02 선행 | [데이터 이전 제안](proposals/DATA-MIGRATION.md)의 대안 중 하나를 합의해 [결정 목록](DECISIONS.md#결정-목록)에 기록한다. Aurora 접근 경로, `storage_path` 접두어(`files/`) 변환, 쓰기 중지 시간, 롤백 기준과 필요한 Terraform 변경을 확정한다. 2026-11-18 대안 A(이전 없음)로 결정([DEC-007](DECISIONS.md#결정-목록)). 접근 경로·접두어 변환·쓰기 중지가 필요 없고 Terraform 변경도 없다. 롤백은 실습 계층 destroy다 |
+| MIG-02 | P1 | 예정 | AWS 배포. PORT-01·MIG-01·ONP-02 선행, SEC-01 권장 | [AWS 배포](design/DEPLOYMENT.md#4-aws-배포)로 유지 계층(`dev-data`)·실습 계층(`dev`)과 애플리케이션을 배포하고 [전환 절차](design/MIGRATION.md#전환-절차)의 1~4단계를 수행한다. 빈 DB·bucket에서 V-AWS-01 smoke를 통과하고, Aurora 0 ACU 자동 일시정지·재개(재개 소요 시간 포함)와 실습 계층 destroy 후 유지 계층 plan이 변경 없음(no changes)인지 확인한다. MIG-01에서 데이터 이전을 하지 않기로 해서([DEC-007](DECISIONS.md#결정-목록)) V-MIG는 범위에서 제외한다 |
+| IAC-01 | P1 | 예정 | 원격 state와 환경 분리 보강. PORT-01 선행. 유지/실습 계층 state 분리는 2026-11-18에 구현([DEC-008](DECISIONS.md#결정-목록)) | 두 계층(`dev-data`, `dev`) 각각의 state bootstrap·접근 권한·암호화·버전 관리·잠금·복구 절차를 구현하고 동시 실행 잠금과 복구를 검증. Terraform 버전과 S3/DynamoDB 잠금 방식의 호환성을 확인하고 환경별 state 격리를 검증. [배포 기준](design/DEPLOYMENT.md)·[Terraform 안내](../terraform/README.md)에 반영 |
 | IAC-02 | P1 | 구현·로컬 plan 검증, AWS 실행 검증 대기 | Terraform과 CD·Auto Scaling의 관리 책임 정리. 선행 없음 | task definition·service 배포 버전·desired count의 관리 주체와 최초 배포 순서를 정의. CD 배포·스케일 변경 후 plan/apply가 이를 의도치 않게 되돌리지 않는지 검증하고 [아키텍처](DESIGN.md)·[배포 기준](design/DEPLOYMENT.md#ecs-관리-책임과-배포-순서-iac-02)에 반영. [로컬 근거](worklogs/2026-11-17.md)의 범위를 넘어 실제 AWS plan/apply 확인이 남음 |
 | SEC-01 | P1 | 예정 | 비밀값 주입과 배포 권한 분리. PORT-01 선행 | DB 비밀번호·JWT secret을 Secrets Manager 참조로 주입하고 task definition 일반 환경변수에서 제거. execution/task/CI role의 필요한 권한과 OIDC 신뢰 조건을 검증. Terraform sensitive 표기만으로 state의 비밀값이 제거되지 않음을 고려해 생성·저장 경로를 점검하고 로그·plan 노출 여부를 확인. [배포 기준](design/DEPLOYMENT.md)에 반영 |
 | CICD-01 | P1 | 구현·정적 검증, 실행 검증 대기 | PR CI와 이미지 검증. 선행 없음 | PR에서 백엔드 테스트·이미지 빌드·취약점 검사 수행. 차단 기준과 예외 처리 방식을 정의하고 실패 시 배포 차단을 확인. [구현·검증 근거](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현)의 미확인 항목과 GitHub 실행 증빙을 보완해야 완료. AWS 배포 권한은 배포 job에 한정하고 [배포 기준](design/DEPLOYMENT.md)에 반영 |
@@ -86,7 +86,7 @@
 
 1. ENV-01 → ONP-01 → ONP-02로 온프레미스 기준선을 만든다.
 2. ONP-03으로 FILE-01/02/05의 실서버 검증을 마치고, 같은 기간에 PORT-01과 MIG-01을 준비한다. IAC-02·CICD-01은 AWS 준비와 독립적으로 남은 실행 증빙을 확보할 수 있다.
-3. PORT-01·MIG-01 완료 후 MIG-02로 배포·데이터 이전을 실행하고 VERIFY-01로 비교한다. SEC-01·IAC-01은 MIG-02 전에 적용하는 것을 권장한다.
+3. PORT-01·MIG-01 완료 후 MIG-02로 배포를 실행하고(데이터 이전 없음, DEC-007) VERIFY-01로 비교한다. SEC-01·IAC-01은 MIG-02 전에 적용하는 것을 권장한다.
 4. VERIFY-02 → CICD-02/03, OBS-01/02 → OPS-01/02 → PERF-01 순서로 운영 검증을 넓힌다. FILE-03은 FILE-01/02 실서버 검증 후 착수한다.
 5. ARCH-01 → PORT-02로 마무리한다. K8S-01은 이후 선택 사항이다.
 
@@ -94,4 +94,4 @@
 
 ## 실행 일정과 리스크
 
-착수일·완료일과 AWS 비용 한도는 미정이다. 선행 조건과 예산을 확인한 뒤 이 문서의 각 작업에 일정을 기록한다. 로컬 호스트의 Docker 설치·메모리 부족은 ENV-01, AWS 권한 부족·생성 지연·데이터 불일치·OIDC 문제는 PORT-01과 해당 작업에서 추적한다.
+착수일·완료일과 AWS 비용 한도는 미정이다. 리전·인증·보존 범위는 PORT-01에서 정했다([DEC-006](DECISIONS.md#결정-목록), [DEC-008](DECISIONS.md#결정-목록)). 선행 조건과 예산을 확인한 뒤 이 문서의 각 작업에 일정을 기록한다. 로컬 호스트의 Docker 설치·메모리 부족은 ENV-01, AWS 권한 부족·생성 지연·데이터 불일치·OIDC 문제는 PORT-01과 해당 작업에서 추적한다.
