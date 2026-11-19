@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 0. 준비 | 로컬 WSL2에서 컨테이너를 실행할 수 있다 | ENV-01 |
 | 1. 온프레미스 구축·컨테이너 실행 | 현재 코드로 Compose 스택을 띄우고 기능·장애 기준선을 남긴다 | ONP-01~03, FILE-01/02/04/05 실서버 검증 |
-| 2. AWS 마이그레이션 | 현재 Terraform 구성으로 배포하고 데이터를 옮겨 계약을 비교한다 | PORT-01, MIG-01/02, IAC-01/02, SEC-01, CICD-01, VERIFY-01 |
+| 2. AWS 마이그레이션 | 현재 Terraform 구성으로 배포하고 데이터를 옮겨 계약을 비교한다 | PORT-01, MIG-01/02, IAC-01/02, SEC-01, CICD-01, VERIFY-01, BACKUP-01 |
 | 3. 운영 검증·보강 | 장애 복구·관측·배포 통제·백업을 검증한다 | VERIFY-02, IAC-03, CICD-02/03, OBS-01/02, OPS-01/02, FILE-03, PERF-01 |
 | 4. 비교·정리 | 측정 근거로 설계를 비교하고 외부 설명 자료를 완성한다 | ARCH-01, PORT-02, K8S-01(선택) |
 
@@ -51,6 +51,7 @@
 | SEC-01 | P1 | 예정 | 비밀값 주입과 배포 권한 분리. PORT-01 선행 | DB 비밀번호·JWT secret을 Secrets Manager 참조로 주입하고 task definition 일반 환경변수에서 제거. execution/task/CI role의 필요한 권한과 OIDC 신뢰 조건을 검증. Terraform sensitive 표기만으로 state의 비밀값이 제거되지 않음을 고려해 생성·저장 경로를 점검하고 로그·plan 노출 여부를 확인. [배포 기준](design/DEPLOYMENT.md)에 반영 |
 | CICD-01 | P1 | 구현·정적 검증, 실행 검증 대기 | PR CI와 이미지 검증. 선행 없음 | PR에서 백엔드 테스트·이미지 빌드·취약점 검사 수행. 차단 기준과 예외 처리 방식을 정의하고 실패 시 배포 차단을 확인. [구현·검증 근거](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현)의 미확인 항목과 GitHub 실행 증빙을 보완해야 완료. AWS 배포 권한은 배포 job에 한정하고 [배포 기준](design/DEPLOYMENT.md)에 반영 |
 | VERIFY-01 | P1 | 실행 결과 미확인 | 온프레미스/AWS 계약 비교. ONP-02·MIG-02 선행 | ONP-02 기준선과 같은 V-FUNC·V-DATA·V-IDEM을 [AWS 검증](design/VALIDATION.md#8-aws-검증)에서 실행하고 응답·파일 해시·object key·cache key 결과를 비교해 작업일지에 연결한다. |
+| BACKUP-01 | P1 | 예정 (개인 계정 CLI 접근 준비됨) | 개인 계정 백업 구성. S3 복제는 PORT-01 선행(완료), DB dump는 SEC-01·MIG-02 선행. 결정 [ADR-002](adr/002-CROSS-ACCOUNT-BACKUP.md) | 개인 계정 백업 bucket(퍼블릭 차단·암호화·버전 관리)과 bucket policy, 부트캠프 계정 복제 role(trust 조건 `aws:SourceAccount`·`aws:SourceArn`)·복제 규칙(삭제 마커 제외)을 Terraform으로 만든다. 새 객체가 개인 계정에 복제되고 원본 삭제가 사본에 반영되지 않음을 확인한다. ECS 일회성 task로 `pg_dump`를 `files/` 밖 접두어에 올려 복제되는지, Lambda·애플리케이션 IAM 경계에 영향이 없는지 확인한다. 실습 종료 절차([정리](design/DEPLOYMENT.md#412-정리))에 dump 단계를 넣고 비용·한계를 기록한다. 복원 검증은 OPS-02 |
 
 ## 3단계 - 운영 검증·보강
 
@@ -63,7 +64,7 @@
 | OBS-02 | P1 | 예정 | 알람 전달과 대응 런북. OBS-01 선행 | CloudWatch alarm action과 알림 수신 경로를 구성하고 의도적 오류의 알람 발화·수신·정상 복귀를 확인. 알람별 증상·진단·복구·에스컬레이션 기준을 [AWS 런북](design/DEPLOYMENT.md)·[트러블슈팅](TROUBLESHOOTING.md)에 연결 |
 | CICD-03 | P1 | 예정 | 실패 배포 감지·롤백. CICD-02, OBS-02 선행 | ECS 기동/health 실패와 기동 후 오류율 증가에 대한 감지·롤백 방식 구성. 의도적 실패 배포에서 이전 정상 revision 복구와 API 정상화를 검증하고 감지·복구 시간 및 자동/수동 복구 한계를 기록 |
 | OPS-01 | P1 | 예정 | 장애 대응 훈련·사후 분석. VERIFY-02, OBS-02, CICD-03 선행 | 기존 VERIFY-02 결과를 재사용하고 ECS task 종료·실패 배포에 대한 타임라인, 사용자 영향, 감지/복구 시간, 원인·개선점을 기록. 캐시 장애 시 실제 API 동작과 복구 한계를 확인하고 FILE-02 구현 후에는 그 검증 결과를 재사용. 실험 중단·복구·잔여 리소스를 확인하고 [최종 검증](design/VALIDATION.md)·당일 작업일지에 연결 |
-| OPS-02 | P1 | 예정 | DB·object storage 백업 복원 검증. VERIFY-01, SEC-01 선행 | 백업 보존·삭제 보호 정책과 RTO/RPO 목표를 정의. 별도 환경에 DB 백업 복원 후 storage_path와 S3 object/version 정합성 및 실제 다운로드 해시를 확인. 복원 소요·데이터 손실 범위·목표 충족 여부·정리 결과를 기록하고 [AWS 런북](design/DEPLOYMENT.md)·[최종 검증](design/VALIDATION.md)에 반영 |
+| OPS-02 | P1 | 예정 | DB·object storage 백업 복원 검증. VERIFY-01, SEC-01 선행, 개인 계정 백업은 BACKUP-01 선행 | 백업 보존·삭제 보호 정책과 RTO/RPO 목표를 정의. 별도 환경에 DB 백업 복원 후 storage_path와 S3 object/version 정합성 및 실제 다운로드 해시를 확인. 복원 소요·데이터 손실 범위·목표 충족 여부·정리 결과를 기록하고 [AWS 런북](design/DEPLOYMENT.md)·[최종 검증](design/VALIDATION.md)에 반영 |
 | FILE-03 | P1 | 예정 | 검사 상태와 후처리 결과의 DB·캐시 연결. FILE-01/02 선행, AWS 실행은 PORT-01·SEC-01 선행 | 업로드 직후 `AVAILABLE`·`CLEAN`을 기록하는 현재 동작과 [요구사항의 상태 전이](PRD.md#파일-라이프사이클) 차이를 정리하고 검사 완료 전 다운로드 정책·오류 계약을 확정. 실제 검사 경로와 결과 전달·최소 권한을 설계하고 검사 결과를 DB·캐시·다운로드 판단에 반영. 정상·악성 시험 파일·검사 오류·시간 초과·이벤트 중복/역순·업로드 DB 저장 전 이벤트 도착·삭제와 검사 완료의 경합을 검증하고, 실패·미검사 파일이 정상으로 처리되거나 삭제 파일이 복구되지 않음을 확인. 확장자 가드·S3 태그만으로 실제 백신 검사 완료를 표시하지 않음. [AWS의 현재 한계](design/AWS.md#현재-한계)를 해소한 범위만 갱신하고 PRD·DESIGN·DATABASE·API·[이전 절차](design/MIGRATION.md)·배포·검증 기준과 실제 결과를 연결 |
 | PERF-01 | P2 | 예정 | 재현 가능한 부하·스케일링 실험. VERIFY-02, OBS-02, IAC-02 선행 | 파일 크기·동시 사용자·요청 비율·기간·예열·반복 조건과 비용/중단 기준을 정해 실행. 처리량·오류율·p95·task 수·확장/축소 시간을 기록하고 동일 조건의 기준선과 비교. [최종 검증](design/VALIDATION.md)에 방법, 작업일지에 원본 결과 연결 |
 
@@ -86,7 +87,7 @@
 
 1. ENV-01 → ONP-01 → ONP-02로 온프레미스 기준선을 만든다.
 2. ONP-03으로 FILE-01/02/05의 실서버 검증을 마치고, 같은 기간에 PORT-01과 MIG-01을 준비한다. IAC-02·CICD-01은 AWS 준비와 독립적으로 남은 실행 증빙을 확보할 수 있다.
-3. PORT-01·MIG-01 완료 후 MIG-02로 배포를 실행하고(데이터 이전 없음, DEC-007) VERIFY-01로 비교한다. SEC-01·IAC-01은 MIG-02 전에 적용하는 것을 권장한다.
+3. PORT-01·MIG-01 완료 후 MIG-02로 배포를 실행하고(데이터 이전 없음, DEC-007) VERIFY-01로 비교한다. SEC-01·IAC-01은 MIG-02 전에 적용하는 것을 권장한다. BACKUP-01은 MIG-02 뒤에 하되 S3 복제는 먼저 해도 된다.
 4. VERIFY-02 → CICD-02/03, OBS-01/02 → OPS-01/02 → PERF-01 순서로 운영 검증을 넓힌다. FILE-03은 FILE-01/02 실서버 검증 후 착수한다.
 5. ARCH-01 → PORT-02로 마무리한다. K8S-01은 이후 선택 사항이다.
 

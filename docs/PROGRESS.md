@@ -27,12 +27,13 @@
 1. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인(비활성이면 `budget_filter_by_owner_tag = false` 검토).
 2. 권장 선행: SEC-01(비밀값 주입, 두 계층의 DB 비밀번호 중복 해소). 저장소는 SSM SecureString으로 선택했고, Terraform 생성·write-only 방식은 확인 대기.
 3. MIG-02 → VERIFY-01: 실습 계층 배포(첫 배포 전 [DB 깨우기](design/DEPLOYMENT.md#46-github-actions-배포-실행)), 빈 상태 smoke, Aurora 일시정지·재개 확인, 계약 비교.
-4. 미승인: 공유 계정 정리 정책 대비 [개인 계정 백업](proposals/CROSS-ACCOUNT-BACKUP.md)(S3 교차 계정 복제 + `pg_dump`). 개인 계정 CLI 접근은 준비했다.
+4. BACKUP-01: [개인 계정 백업](adr/002-CROSS-ACCOUNT-BACKUP.md)(S3 교차 계정 복제 + `pg_dump`, DEC-012). 개인 계정 CLI 접근은 준비했다. S3 복제는 먼저 해도 된다.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-19: 공유 계정 정리 정책 대비 개인 계정 백업(S3 교차 계정 복제 + `pg_dump`)을 채택했다(DEC-012, ADR-002). 미구현.
 - 2026-11-19: IAC-01. `terraform/bootstrap`으로 state bucket을 만들고 두 계층 backend를 S3(계층별 key, `use_lockfile`)로 바꿨다(DEC-011). dev-data state를 옮기고 잠금·복구를 시험했다.
 - 2026-11-19: 유지 계층(`dev-data`) apply. VPC·S3·Aurora(0~2 ACU, 300초 자동 일시정지, 삭제 보호)·월 $10 예산 생성, 재 plan 변경 없음. 거부된 access key를 새 키로 교체했다.
 - 2026-11-19: V-LOC-02~05 실행. `s3` 프로필·컨테이너 한도·Lambda 후처리는 통과했다. Aurora 일시정지 중 backend가 기동하면 DB 연결 실패로 종료되는 것을 확인했고, 코드는 그대로 두고 배포 전 DB를 깨우기로 했다(DEC-010). V-LOC-04 4-2 시나리오의 시작 명령 오류와 재현 불가(20초 pause)를 고쳤다.
