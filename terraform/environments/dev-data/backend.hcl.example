@@ -1,0 +1,2 @@
+# Copy to backend.hcl (gitignored) and set the bucket from `terraform -chdir=../../bootstrap output state_bucket_name`.
+bucket = "replace-with-terraform-state-bucket"

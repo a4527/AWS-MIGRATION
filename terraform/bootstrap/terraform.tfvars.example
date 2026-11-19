@@ -1,0 +1,5 @@
+aws_region = "us-east-1"
+# Required. Same Owner value as dev-data and dev.
+owner             = "replace-with-owner-id"
+project_name      = "fileshare"
+state_bucket_name = "replace-with-globally-unique-fileshare-tfstate-bucket"

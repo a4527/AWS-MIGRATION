@@ -82,6 +82,7 @@ DB 복원 경로(로컬에서 Aurora로 가는 방법)는 정하지 않았다. �
 - 시퀀스: `pg_dump -Fc`/`pg_restore`는 `id` 시퀀스 값을 함께 옮긴다. 복원 후 새 업로드의 `fileId`가 기존 최대값보다 큰지 확인한다(V-MIG-02).
 - Aurora 엔진 버전은 Terraform 변수(`aurora_engine_version`)를 따른다. 온프레미스 PostgreSQL 16 덤프를 복원할 수 있는 버전인지 확인한다.
 - 이전 중 생긴 온프레미스 쓰기는 옮겨지지 않는다. 쓰기 중지(5단계)를 먼저 확인한다.
+- 온프레미스 PostgreSQL은 항상 떠 있지만 Aurora는 0 ACU로 일시정지될 수 있다. backend는 기동 중 DB 연결에 실패하면 종료되므로, 실행 중인 task가 없을 때는 배포 전에 DB를 깨운다([DEC-010](../DECISIONS.md#결정-목록), [배포 전 DB 깨우기](DEPLOYMENT.md#46-github-actions-배포-실행)).
 
 ## 롤백
 

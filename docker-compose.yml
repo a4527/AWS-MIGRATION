@@ -75,6 +75,7 @@ services:
       - "${NGINX_PORT:-8080}:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/test-ui:/usr/share/nginx/test-ui:ro
     depends_on:
       - backend
 

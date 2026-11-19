@@ -437,21 +437,24 @@ wait
 
 **4-2. 기동 중 DB가 멈춰 있을 때**
 
+backend 컨테이너는 ID로 직접 시작한다. `$DC start backend`는 의존 서비스 postgres까지 시작하려다 paused 상태라 거부된다. JVM 기동에 16~20초가 걸리므로 pause는 40초로 잡는다. 20초면 DB 연결 시도 전에 풀려 이 상황을 재현하지 못한다(2026-11-19 확인).
+
 ```bash
-$DC stop backend
+BID=$($DC ps -aq backend)
+docker stop "$BID" > /dev/null
 docker compose pause postgres
-$DC start backend
-sleep 20; docker compose unpause postgres
+echo "start   $(date -u +%T)"; docker start "$BID" > /dev/null
+sleep 40; docker compose unpause postgres; echo "unpause $(date -u +%T)"
 for i in $(seq 1 30); do curl -sf "$BASE_URL/actuator/health" > /dev/null && { echo "UP after ${i}x5s"; break; }; sleep 5; done
-$DC ps backend
-$DC logs backend --since 3m | grep -iE 'HikariPool|Connection is not available|APPLICATION FAILED' | head
+docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}' "$BID"
+docker logs --since 3m "$BID" 2>&1 | grep -E 'HikariPool-1 - Starting|connection attempt failed|Application run failed|Started File' | cut -c1-140
+$DC up -d backend      # 종료됐으면 다시 띄운다
 ```
 
 판정:
 
 - 4-1: 로그인이 실패하지 않고 토큰을 받는다. 걸린 시간이 약 20초이고 30초(Hikari 기본 `connectionTimeout`) 안이다.
-- 4-2: backend가 재시작 없이 `UP`이 되고 컨테이너 상태가 running이다.
-- 실패하면 그 결과 자체를 기록한다. AWS에서 같은 문제가 생기면 apply 전에 다음 중 하나로 고친다: Hikari 대기 시간 조정, 최소 ACU를 0보다 크게 설정, 실습 시작 전 DB 미리 깨우기.
+- 4-2: 먼저 `HikariPool-1 - Starting` 시각이 unpause보다 앞인지 본다. 뒤라면 재현되지 않은 것이므로 pause를 늘려 다시 한다. 현재 코드에서는 연결 시도가 약 6초씩 두 번 실패한 뒤 `Application run failed`로 종료(exit 1)되는 것이 기대 결과다(2026-11-19 확인). 기동 시 DB 재시도는 넣지 않았고, AWS에서는 배포 전에 DB를 깨워 이 상황을 피한다([DEC-010](../DECISIONS.md#결정-목록), [배포 전 DB 깨우기](DEPLOYMENT.md#46-github-actions-배포-실행)). 결과가 바뀌면(예: running으로 `UP`) 그 결과와 원인을 기록한다.
 
 ### V-LOC-05 Lambda 후처리
 

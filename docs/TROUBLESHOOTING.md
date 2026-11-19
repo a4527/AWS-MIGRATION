@@ -71,6 +71,16 @@ curl -i http://localhost:8080/actuator/health
   - `DB_URL`은 Compose 내부 주소인 `jdbc:postgresql://postgres:5432/fileshare`를 사용한다.
   - 운영에서는 DB 비밀번호를 코드가 아니라 secret으로 주입한다.
 
+## ECS task가 기동 중 DB 연결 실패로 종료됨
+
+- 증상: 새 task가 health check 전에 STOPPED가 되고, 로그에 `The connection attempt failed`(SQLState 08001)와 `Application run failed`가 있다.
+- 원인: backend는 기동할 때 DB에 연결하지 못하면 재시도 없이 종료된다. Aurora가 0 ACU로 일시정지돼 있으면 재개가 끝나기 전에 연결이 실패할 수 있다(로컬 재현: [V-LOC-04](design/VALIDATION.md#v-loc-04-db-재개-지연) 4-2).
+- 해결 방법:
+  - [배포 전 DB 깨우기](design/DEPLOYMENT.md#46-github-actions-배포-실행)를 실행하고 재개 이벤트를 확인한다.
+  - 실패한 연결 시도도 재개를 일으키므로 ECS가 띄우는 다음 task는 성공할 것으로 예상한다(MIG-02 전까지 미확인). 계속 실패하면 DB 엔드포인트·SG 5432 규칙·비밀번호를 확인한다.
+- 재발 방지 체크리스트:
+  - 실행 중인 task가 없을 때 배포·task 수 증가 전에 DB를 깨운다([DEC-010](DECISIONS.md#결정-목록)).
+
 ## Redis 캐시가 보이지 않음
 
 - 증상: `redis-cli KEYS 'files:metadata:*'` 결과가 비어 있다.
@@ -152,3 +162,48 @@ curl -i http://localhost:8080/actuator/health
 ## AWS 진단 연결
 
 ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 확인 순서는 [AWS 런북의 문제 확인 절](design/DEPLOYMENT.md#411-문제-발생-시-확인-순서)을 따른다. 실제로 재사용할 해결 사례가 생기면 이 문서에 증상·원인·해결·재검증 근거를 추가한다.
+
+## AWS 명령이 InvalidClientTokenId로 실패함
+
+- 증상: `terraform plan`이나 `aws sts get-caller-identity`가 `403 InvalidClientTokenId: The security token included in the request is invalid`로 실패한다.
+- 원인: 설정된 access key가 더 이상 유효하지 않다(비활성화·삭제·교체). 2026-11-19에는 전날 성공한 장기 키가 거부됐고 정확한 원인은 확인하지 못했다. 세션 토큰이 있는 임시 자격 증명이면 만료(`ExpiredToken`)일 수도 있다.
+- 해결 방법:
+  - `env | grep ^AWS_`로 파일 설정을 덮어쓰는 환경변수가 없는지 본다.
+  - IAM 콘솔에서 사용자와 키 상태를 확인하고 새 키를 만들어 `aws configure`로 넣는다. 키 값은 저장소·문서·대화에 남기지 않는다.
+- 재검증 방법·결과: `aws sts get-caller-identity` 성공 뒤 `terraform plan`이 진행됨([작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01)).
+- 재발 방지 체크리스트:
+  - AWS 작업 시작 전에 `aws sts get-caller-identity`부터 확인한다.
+
+## AssumeRole이 정책이 맞아 보이는데도 AccessDenied
+
+- 증상: `aws sts assume-role`이나 `role_arn` 프로필 사용 시 `User: ...:user/<user> is not authorized to perform: sts:AssumeRole on resource: ...:role/<role>`. MFA 코드를 넣어도, 넣지 않아도 같다.
+- 원인: 2026-11-19에는 실제 role 이름(`fileshare-backup-bucket-admin`)과 user inline policy의 `Resource`·로컬 `role_arn`(`fileshare-backup-admin-role`)이 달랐다. 콘솔 화면의 inline policy 이름을 role 이름으로 착각했다. 존재하지 않는 role도 같은 `AccessDenied`로 응답하고, 오류 문구는 user 정책과 trust policy 중 어느 쪽이 막았는지 알려 주지 않는다. 처음에는 `aws login` 세션의 MFA 문제로 잘못 진단해 access key로 바꿨다가 되돌렸다.
+- 해결 방법:
+  - IAM → Roles 목록에서 role 이름을 직접 복사해 user 정책 `Resource`, trust policy를 둔 role, 로컬 `role_arn`이 같은 ARN인지 대조한다.
+  - 그래도 거부되면 trust policy의 `Condition`을 잠시 빼고 시험해 user 정책과 trust policy 중 어느 쪽인지 가른다. IAM Policy Simulator는 user 쪽 정책만 평가한다.
+  - MFA 코드가 틀리면 `AccessDenied`가 아니라 MFA 검증 오류가 난다.
+- 재검증 방법·결과: role 이름을 맞춘 뒤 `aws login` 세션 + `mfa_serial`로 `assumed-role/fileshare-backup-bucket-admin/...` 확인([작업일지](worklogs/2026-11-19.md#개인-계정-백업-준비)).
+- 재발 방지 체크리스트:
+  - 정책 이름과 role 이름을 다르게 짓는다(정책은 `...-policy`, role은 `...-role` 등).
+  - 원인을 하나로 단정하기 전에 두 정책을 갈라 시험한다.
+
+## MFA 코드 입력이 바로 실패함 (`aws: [ERROR]:`)
+
+- 증상: Claude Code 프롬프트의 `!` 명령이나 입력이 없는 셸에서 `Enter MFA code for ...:` 뒤 `GetPassWarning: Can not control echo on the terminal`과 빈 `aws: [ERROR]:`가 나온다.
+- 원인: 대화형 터미널이 아니라 MFA 코드를 입력받을 수 없다. Terraform도 MFA 입력 창을 띄우지 못한다.
+- 해결 방법: 별도 WSL 터미널에서 `aws sts get-caller-identity --profile personal-backup`을 실행해 코드를 넣는다. role 자격 증명이 `~/.aws/cli/cache`에 1시간 저장되어 이후 CLI와 `credential_process` 프로필(`personal-backup-tf`)이 그 캐시를 쓴다.
+- 재검증 방법·결과: 별도 터미널에서 코드 입력 후 `personal-backup-tf`로도 같은 role ARN 확인.
+
+## role을 다시 맡을 때 MFA를 묻지 않음
+
+- 증상: 자격 증명 방식을 바꿨는데(예: access key → `aws login`) `personal-backup` 프로필이 MFA 없이 바로 동작한다.
+- 원인: 이전에 맡은 role 자격 증명이 `~/.aws/cli/cache/<hash>.json`에 만료 전까지 남아 있다. 원본 자격 증명을 바꿔도 캐시를 먼저 쓴다.
+- 해결 방법: 캐시 파일의 `AssumedRoleUser.Arn`만 확인해(`jq -r .AssumedRoleUser.Arn`) 해당 role의 파일을 지운다. 같은 디렉터리의 `session.db`는 CLI 세션 ID 기록이라 자격 증명이 아니다.
+- 재검증 방법·결과: 캐시 삭제 후 입력 없이 실행하면 MFA 입력 단계에서 실패하고, 별도 터미널에서 코드를 넣어야 성공함을 확인.
+
+## WSL에서 aws login 브라우저가 열리지 않음
+
+- 증상: `aws login`이 `xdg-open: no method available`을 출력하고 대기한다.
+- 원인: WSL에 Linux 브라우저가 없다.
+- 해결 방법: 출력된 `https://us-east-1.signin.aws.amazon.com/v1/authorize?...` 주소를 Windows 브라우저에서 연다. 로그인 뒤 `127.0.0.1:<port>`로 돌아오는 요청은 WSL2 localhost 전달로 대기 중인 명령이 받는다. 안 되면 `aws login --remote`를 쓴다.
+- 재검증 방법·결과: 2026-11-19 두 번 모두 Windows 브라우저로 로그인 완료, `get-caller-identity --profile personal` 성공.

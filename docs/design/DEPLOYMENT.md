@@ -81,6 +81,8 @@ curl http://localhost:8080/api/health
 
 첫 빌드는 Gradle 의존성을 받느라 몇 분 걸린다. MinIO 버킷은 첫 업로드 때 backend가 만든다.
 
+브라우저로 기능을 확인하려면 http://localhost:8080/test/ 를 연다. nginx가 `nginx/test-ui/index.html`을 서빙하는 수동 테스트 페이지로, 회원가입·로그인·내 정보·업로드(`Idempotency-Key` 재전송 포함)·목록·조회·다운로드·삭제·관리자 고아 객체 점검을 버튼으로 호출하고 상태 코드와 응답을 보여 준다. 백엔드에 CORS 설정이 없으므로 API와 같은 주소(8080)에서 열어야 한다. AWS(ALB)에는 배포되지 않는다. 판정 기준은 [VALIDATION](VALIDATION.md)을 따른다. 저장된 객체는 MinIO 콘솔(http://localhost:9001, `.env`의 MinIO 계정)에서 본다.
+
 ### 3.3 운영 명령
 
 ```bash
@@ -193,6 +195,52 @@ aws sts get-caller-identity
 
 출력의 `Account` 값이 리소스가 생성될 AWS 계정이다.
 
+### 4.1-1 원격 state 준비 (IAC-01)
+
+두 계층의 state는 S3 bucket 하나에 계층별 key로 둔다(`fileshare/dev-data/terraform.tfstate`, `fileshare/dev/terraform.tfstate`). 잠금은 S3 자체 잠금(`use_lockfile`)이라 state 옆에 `.tflock` 객체가 생기고, DynamoDB 테이블은 쓰지 않는다([DEC-011](../DECISIONS.md#결정-목록)). bucket은 `terraform/bootstrap`이 만들고, bootstrap 자신은 로컬 state를 쓴다. Terraform 1.11 이상이 필요하다.
+
+state bucket이 없을 때만 한 번 실행한다.
+
+```bash
+cd terraform/bootstrap
+cp terraform.tfvars.example terraform.tfvars   # owner, state_bucket_name(전역 유일) 수정
+terraform init && terraform plan && terraform apply
+terraform output -raw state_bucket_name
+```
+
+bucket은 버전 관리·SSE-S3 암호화·퍼블릭 차단·TLS 외 접근 거부·`prevent_destroy`가 켜져 있다. 이전 state 버전은 최신 20개를 넘는 것 중 90일 지난 것부터 만료된다. bootstrap의 로컬 state를 잃으면 `terraform import aws_s3_bucket.state <bucket>` 등으로 되살린다(리소스는 bucket과 그 설정뿐).
+
+각 계층 디렉터리에 `backend.hcl`(gitignore 대상)을 만들고 init한다.
+
+```bash
+cd terraform/environments/dev-data      # dev도 같다
+cp backend.hcl.example backend.hcl      # bucket = "<state_bucket_name>"
+terraform init -backend-config=backend.hcl
+```
+
+로컬 state가 이미 있는 계층은 `terraform init -migrate-state -backend-config=backend.hcl`로 옮긴다. 옮긴 뒤 `terraform state pull`의 리소스가 원본과 같은지, `terraform plan`이 변경 없음인지 확인하고 로컬 사본을 정리한다. 로컬 사본과 원격 state에는 비밀값이 평문으로 있다(SEC-01 전까지).
+
+state 문제 대응:
+
+| 상황 | 증상 | 대응 |
+| --- | --- | --- |
+| 동시 실행 | `Error acquiring the state lock`, `StatusCode: 412`, 다른 작업의 `ID`·`Operation` | 다른 작업이 끝나기를 기다린다. `-lock-timeout=60s`로 대기할 수 있다 |
+| 남은 잠금 | 실행 중인 Terraform이 없는데 같은 오류가 계속됨(프로세스 강제 종료·네트워크 단절 뒤) | 정말 실행 중인 작업이 없는지 확인한 뒤 `terraform force-unlock <ID>` |
+| state 손상·잘못된 덮어쓰기 | plan이 이미 있는 리소스를 새로 만들려 하거나 state를 읽지 못함 | 아래 버전 복구 |
+
+```bash
+B=<state_bucket_name>; K=fileshare/dev-data/terraform.tfstate
+aws s3api list-object-versions --bucket $B --prefix $K \
+  --query "Versions[?Key=='$K'].{id:VersionId,latest:IsLatest,time:LastModified}"
+aws s3api get-object --bucket $B --key $K --version-id <복구할 VersionId> restore.tfstate
+terraform show restore.tfstate                    # 내용 확인
+terraform state push -force restore.tfstate       # serial이 낮아 -force가 필요하다
+terraform plan                                    # 실제 인프라와 차이 확인
+rm restore.tfstate
+```
+
+`state push`는 serial이 같고 내용이 다른 state를 `-force` 없이 거부한다. 복구한 버전 이후에 바뀐 리소스는 state에서 빠지므로 plan 결과를 보고 import나 apply로 맞춘다.
+
 ### 4.2 Terraform 변수 파일 작성
 
 유지 계층을 처음 만들 때만 다음을 수행한다.
@@ -252,7 +300,7 @@ route53_hosted_zone_name = "example.com"
 유지 계층이 아직 없으면 `dev-data`에서 먼저 실행한다. 실습 계층은 유지 계층 리소스를 이름으로 조회하므로 유지 계층이 없으면 plan이 실패한다.
 
 ```bash
-terraform init
+terraform init -backend-config=backend.hcl
 terraform fmt -recursive ../..
 terraform validate
 terraform plan
@@ -306,6 +354,8 @@ aws ce list-cost-allocation-tags --tag-keys Owner --query 'CostAllocationTags[].
 aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=fileshare \
   --query 'ResourceTagMappingList[?!(Tags[?Key==`Owner`])].ResourceARN'
 ```
+
+태깅 API 결과에는 이미 삭제한 리소스(예: 이전 실습의 subnet)가 한동안 남고, Aurora cluster는 이름 ARN과 리소스 ID ARN 두 개로 나온다. 개수는 `describe-subnets` 등 서비스 API로 대조한다.
 
 실습 계층을 다시 만들면 ECR repository도 새로 생기므로 이미지를 다시 push해야 한다(4.6). GitHub Actions deploy role은 같은 이름으로 다시 만들어져 ARN이 같으므로 secret은 그대로 쓸 수 있다.
 
@@ -389,6 +439,24 @@ ECS service rolling deployment
 ```
 
 배포가 성공하면 ECS service가 새 task를 실행하고 ALB target group health check를 통과한 task로 트래픽을 보낸다.
+
+**배포 전 DB 깨우기 ([DEC-010](../DECISIONS.md#결정-목록))**
+
+backend는 기동할 때 DB에 연결하지 못하면 종료된다([V-LOC-04](VALIDATION.md#v-loc-04-db-재개-지연) 4-2). Aurora가 0 ACU로 일시정지돼 있으면 재개(15초 미만, AWS 안내)가 끝나기 전에 첫 task가 실패할 수 있다. 그래서 실행 중인 task가 없을 때(실습 계층을 새로 만든 직후 첫 배포, task를 0개로 줄였다 다시 늘릴 때)는 task가 뜨기 직전에 DB를 깨운다. 실행 중인 task가 있으면 그 연결 때문에 DB가 일시정지되지 않으므로 생략해도 된다.
+
+DB는 database subnet에 있어 로컬에서 직접 연결할 수 없다. 대신 writer 인스턴스의 로그 목록 조회로 재개를 일으킨다. AWS는 연결 요청, RDS Data API 요청, 로그 조회·다운로드, 설정 변경을 재개 조건으로 안내한다([Aurora 0 ACU 안내](https://aws.amazon.com/blogs/database/introducing-scaling-to-0-capacity-with-amazon-aurora-serverless-v2/)). `dev-data` 디렉터리에서 실행한다.
+
+```bash
+CLUSTER=$(terraform output -raw aurora_cluster_identifier)
+WRITER=$(aws rds describe-db-clusters --db-cluster-identifier "$CLUSTER" \
+  --query 'DBClusters[0].DBClusterMembers[?IsClusterWriter].DBInstanceIdentifier' --output text)
+aws rds describe-db-log-files --db-instance-identifier "$WRITER" --query 'length(DescribeDBLogFiles)'
+sleep 30
+aws rds describe-events --source-type db-instance --source-identifier "$WRITER" --duration 10 \
+  --query 'Events[].[Date,Message]' --output text
+```
+
+판정: 마지막 이벤트 목록에 재개 시작·완료 이벤트가 보이거나, 이미 실행 중이어서 재개 이벤트가 없다. 정확한 이벤트 문구와 로그 조회만으로 재개되는지는 첫 실행(MIG-02)에서 확인해 여기에 고친다. 자동 일시정지는 300초 동안 연결이 없으면 다시 걸리므로, workflow를 시작할 때가 아니라 `ECS service rolling deployment` 단계에 들어갈 때 깨운다(테스트·빌드·검사가 5분을 넘을 수 있다). 깨우기를 빠뜨려 첫 task가 실패해도 그 연결 시도가 재개를 일으키므로 ECS가 띄우는 다음 task는 성공할 것으로 예상한다(미확인). 이 경우 실패 task를 작업일지에 기록한다.
 
 ### 4.7 AWS 콘솔 확인
 

@@ -4,10 +4,12 @@ AWS 인프라를 코드로 정의하는 영역입니다.
 
 ```text
 terraform/
+├── bootstrap/      # 원격 state용 S3 bucket (로컬 state, 처음 한 번)
 ├── environments/
 │   ├── dev-data/   # 유지 계층: VPC, S3, Aurora (계속 유지)
 │   └── dev/        # 실습 계층: NAT, ALB/ECS, ECR, Lambda, Redis (실습마다 apply/destroy)
-│       ├── backend.tf.example
+│       ├── backend.tf            # S3 backend (bucket은 backend.hcl)
+│       ├── backend.hcl.example
 │       ├── data.tf
 │       ├── main.tf
 │       ├── outputs.tf
@@ -62,19 +64,25 @@ terraform/
 두 계층은 state가 따로다([DEC-008](../docs/DECISIONS.md#결정-목록), [계층 설명](../docs/design/AWS.md#유지-계층과-실습-계층)). 유지 계층을 먼저 만들고, 실습 계층은 실습할 때마다 만들고 지운다. 두 계층의 `project_name`·`environment`·`file_bucket_name`·`aurora_master_password`는 같아야 한다.
 
 ```bash
-cd terraform/environments/dev-data      # 처음 한 번
+cd terraform/bootstrap                  # 처음 한 번: state bucket
 cp terraform.tfvars.example terraform.tfvars
-terraform init && terraform plan
+terraform init && terraform apply
+
+cd ../environments/dev-data             # 처음 한 번
+cp terraform.tfvars.example terraform.tfvars
+cp backend.hcl.example backend.hcl      # bucket = bootstrap output
+terraform init -backend-config=backend.hcl && terraform plan
 
 cd ../dev                               # 실습마다
 cp terraform.tfvars.example terraform.tfvars
-terraform init && terraform plan
+cp backend.hcl.example backend.hcl
+terraform init -backend-config=backend.hcl && terraform plan
 terraform destroy                       # 실습 종료 시 dev만
 ```
 
 유지 계층의 Aurora는 `deletion_protection = true`라 `terraform destroy`가 실패한다. 정말 지울 때만 `aurora_deletion_protection = false`로 먼저 apply한다.
 
-원격 state를 사용할 때는 각 디렉터리의 `backend.tf.example`을 `backend.tf`로 복사하고 state bucket과 lock table 이름을 실제 값으로 바꾼다(IAC-01).
+두 계층의 state는 bootstrap이 만든 S3 bucket에 계층별 key로 저장되고, 잠금은 S3 자체 잠금(`use_lockfile`)이다([DEC-011](../docs/DECISIONS.md#결정-목록)). bucket 이름만 gitignore된 `backend.hcl`에 둔다. 잠금 해제·버전 복구는 [원격 state 준비](../docs/design/DEPLOYMENT.md#41-1-원격-state-준비-iac-01)를 따른다. 오프라인 검증만 할 때는 `terraform init -backend=false`를 쓴다.
 
 ## 변수 체계
 

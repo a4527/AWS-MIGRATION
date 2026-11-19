@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Share 테스트</title>
+<!-- 로컬 온프레미스(nginx) 전용 수동 테스트 페이지. API와 같은 주소에서 열어야 한다(CORS 없음). -->
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --line: #e3e6ec;
+    --accent: #2f6fde; --accent-text: #ffffff; --ok: #1a7f4b; --err: #c23934; --warn: #a15c00;
+    --code-bg: #f1f3f6; --chip: #eef2fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --panel: #1c2027; --text: #e6e8ec; --muted: #9aa3b2; --line: #2c323c;
+      --accent: #5b8ff0; --accent-text: #0d1117; --ok: #4cc38a; --err: #f07167; --warn: #e5a54b;
+      --code-bg: #12151a; --chip: #232a36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; }
+  header { padding: 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+           display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; }
+  .status { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; color: var(--muted); }
+  .chip { background: var(--chip); padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 4px; }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--err); }
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding: 16px; max-width: 1280px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+  label { font-size: 12px; color: var(--muted); }
+  input[type=text], input[type=email], input[type=password], input[type=number] {
+    flex: 1 1 140px; min-width: 0; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; }
+  input[type=file] { flex: 1 1 200px; min-width: 0; color: var(--text); }
+  button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+           color: var(--text); font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--err); }
+  button:disabled { opacity: .5; cursor: default; }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; }
+  td.actions { white-space: nowrap; }
+  td.actions button { padding: 2px 8px; font-size: 12px; }
+  .table-wrap { overflow-x: auto; }
+  .log { display: flex; flex-direction: column; gap: 8px; max-height: 78vh; overflow-y: auto; }
+  .entry { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .entry-head { display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: var(--code-bg); font-size: 12px; flex-wrap: wrap; }
+  .code { font-weight: 600; } .code.ok { color: var(--ok); } .code.err { color: var(--err); }
+  .entry pre { margin: 0; padding: 8px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+               white-space: pre-wrap; word-break: break-all; }
+  .muted { color: var(--muted); } .replay { color: var(--warn); font-weight: 600; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>File Share 테스트</h1>
+  <div class="status">
+    <span class="chip"><span id="healthDot" class="dot"></span><span id="healthText">health 확인 중</span></span>
+    <span class="chip" id="whoami">로그인 안 됨</span>
+    <button id="btnHealth">health</button>
+    <a href="http://localhost:9001" target="_blank" rel="noopener">MinIO 콘솔</a>
+  </div>
+</header>
+
+<main>
+  <div class="col">
+    <section>
+      <h2>계정</h2>
+      <div class="row">
+        <input id="email" type="email" placeholder="이메일" autocomplete="off">
+        <button id="btnRandom" title="새 이메일 생성">새 이메일</button>
+      </div>
+      <div class="row">
+        <input id="password" type="password" value="Password123!" placeholder="비밀번호">
+        <input id="name" type="text" value="테스트 사용자" placeholder="이름">
+      </div>
+      <div class="row">
+        <button id="btnSignup">회원가입</button>
+        <button id="btnLogin" class="primary">로그인</button>
+        <button id="btnLogout">토큰 지우기</button>
+      </div>
+      <div class="row">
+        <button id="btnMe">내 정보</button>
+        <input id="newName" type="text" placeholder="바꿀 이름">
+        <button id="btnRename">이름 변경</button>
+      </div>
+      <p class="hint">관리자 기능은 DB에서 역할을 바꾼 뒤 다시 로그인해야 쓸 수 있다(V-ADMIN-01).</p>
+    </section>
+
+    <section>
+      <h2>업로드</h2>
+      <div class="row"><input id="file" type="file"></div>
+      <div class="row"><input id="description" type="text" placeholder="설명 (선택)"></div>
+      <div class="row">
+        <label for="idemKey">Idempotency-Key</label>
+        <input id="idemKey" type="text" placeholder="비우면 보내지 않음">
+        <button id="btnNewKey">새 키</button>
+      </div>
+      <div class="row">
+        <button id="btnUpload" class="primary">업로드</button>
+        <button id="btnUploadTwice" title="같은 키로 두 번 보낸다">같은 키로 2번</button>
+      </div>
+      <p class="hint">허용 확장자 pdf·png·jpg·jpeg·txt·csv, 최대 10MB(nginx가 초과분을 413으로 막는다). 두 번째 응답에 Idempotent-Replayed 헤더가 오면 재전송으로 처리된 것이다.</p>
+    </section>
+
+    <section>
+      <h2>내 파일 <button id="btnList" style="margin-left:8px">새로고침</button></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>이름</th><th>크기</th><th>상태</th><th>검사</th><th></th></tr></thead>
+          <tbody id="fileRows"><tr><td colspan="6" class="muted">로그인 후 새로고침</td></tr></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <input id="fileIdManual" type="number" min="1" placeholder="파일 ID 직접 입력 (삭제된 파일·남의 파일)">
+        <button id="btnGetManual">조회</button>
+        <button id="btnDownManual">다운로드</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>관리자 저장소 점검</h2>
+      <div class="row">
+        <label for="minAge">minAgeMinutes</label>
+        <input id="minAge" type="number" min="1" value="60" style="flex:0 1 90px">
+        <button id="btnOrphans">고아 객체 보고</button>
+        <button id="btnCleanup" class="danger">정리 실행</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section>
+      <h2>요청 기록 <button id="btnClear" style="margin-left:8px">지우기</button></h2>
+      <div id="log" class="log"><p class="muted">요청을 보내면 상태 코드와 응답이 여기에 쌓인다.</p></div>
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch {} },
+  };
+  let token = store.get('token');
+  let user = null;
+  try { user = JSON.parse(store.get('user') || 'null'); } catch { user = null; }
+
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+    : 'k-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10));
+  const fmtSize = (n) => n == null ? '' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
+
+  function setWho() {
+    $('whoami').textContent = token && user ? `${user.email} (${user.role})` : (token ? '토큰 있음' : '로그인 안 됨');
+  }
+
+  function logEntry(method, path, status, ms, body, extra) {
+    const log = $('log');
+    if (log.firstElementChild && log.firstElementChild.tagName === 'P') log.innerHTML = '';
+    const entry = document.createElement('div'); entry.className = 'entry';
+    const head = document.createElement('div'); head.className = 'entry-head';
+    const code = document.createElement('span');
+    code.className = 'code ' + (status >= 200 && status < 300 ? 'ok' : 'err');
+    code.textContent = status === 0 ? 'ERR' : String(status);
+    const what = document.createElement('span'); what.textContent = `${method} ${path}`;
+    const time = document.createElement('span'); time.className = 'muted';
+    time.textContent = `${ms}ms · ${new Date().toLocaleTimeString()}`;
+    head.append(code, what, time);
+    if (extra) { const x = document.createElement('span'); x.className = 'replay'; x.textContent = extra; head.append(x); }
+    const pre = document.createElement('pre');
+    pre.textContent = typeof body === 'string' ? body : JSON.stringify(body, null, 2);
+    entry.append(head, pre);
+    log.prepend(entry);
+  }
+
+  async function call(method, path, { json, form, headers = {}, auth = true, raw = false } = {}) {
+    const h = { ...headers };
+    if (auth && token) h['Authorization'] = 'Bearer ' + token;
+    let body;
+    if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
+    if (form) body = form;
+    const t0 = performance.now();
+    let res;
+    try {
+      res = await fetch(path, { method, headers: h, body });
+    } catch (e) {
+      logEntry(method, path, 0, Math.round(performance.now() - t0), String(e));
+      return { status: 0, data: null };
+    }
+    const ms = Math.round(performance.now() - t0);
+    const replay = res.headers.get('Idempotent-Replayed');
+    const extra = replay ? `Idempotent-Replayed: ${replay}` : (res.headers.get('Retry-After') ? `Retry-After: ${res.headers.get('Retry-After')}` : '');
+    if (raw && res.ok) return { status: res.status, res, ms };
+    const text = await res.text();
+    let data = text;
+    try { data = JSON.parse(text); } catch {}
+    logEntry(method, path, res.status, ms, data === '' ? '(빈 응답)' : data, extra);
+    return { status: res.status, data };
+  }
+
+  async function health() {
+    const t0 = performance.now();
+    try {
+      const r = await fetch('/api/health');
+      const j = await r.json();
+      const up = r.ok && j?.data?.status === 'UP';
+      $('healthDot').className = 'dot ' + (up ? 'up' : 'down');
+      $('healthText').textContent = up ? `UP · ${Math.round(performance.now() - t0)}ms` : `HTTP ${r.status}`;
+    } catch {
+      $('healthDot').className = 'dot down'; $('healthText').textContent = '연결 안 됨';
+    }
+  }
+
+  $('btnHealth').onclick = async () => { await call('GET', '/api/health', { auth: false }); health(); };
+  $('btnRandom').onclick = () => { $('email').value = `ui-${Date.now()}@example.com`; };
+
+  $('btnSignup').onclick = () => call('POST', '/api/auth/signup', { auth: false,
+    json: { email: $('email').value.trim(), password: $('password').value, name: $('name').value } });
+
+  $('btnLogin').onclick = async () => {
+    const r = await call('POST', '/api/auth/login', { auth: false,
+      json: { email: $('email').value.trim(), password: $('password').value } });
+    if (r.status === 200 && r.data?.data?.accessToken) {
+      token = r.data.data.accessToken; user = r.data.data.user || null;
+      store.set('token', token); store.set('user', JSON.stringify(user));
+      setWho(); listFiles();
+    }
+  };
+  $('btnLogout').onclick = () => {
+    token = null; user = null; store.set('token', null); store.set('user', null); setWho();
+    $('fileRows').innerHTML = '<tr><td colspan="6" class="muted">로그인 후 새로고침</td></tr>';
+  };
+  $('btnMe').onclick = () => call('GET', '/api/users/me');
+  $('btnRename').onclick = () => call('PATCH', '/api/users/me', { json: { name: $('newName').value } });
+
+  $('btnNewKey').onclick = () => { $('idemKey').value = 'ui-' + uuid(); };
+
+  function uploadForm() {
+    const f = $('file').files[0];
+    if (!f) { logEntry('POST', '/api/files', 0, 0, '파일을 먼저 고른다.'); return null; }
+    const fd = new FormData();
+    fd.append('file', f);
+    if ($('description').value) fd.append('description', $('description').value);
+    return fd;
+  }
+  function idemHeaders() {
+    const k = $('idemKey').value.trim();
+    return k ? { 'Idempotency-Key': k } : {};
+  }
+  $('btnUpload').onclick = async () => {
+    const fd = uploadForm(); if (!fd) return;
+    await call('POST', '/api/files', { form: fd, headers: idemHeaders() });
+    listFiles();
+  };
+  $('btnUploadTwice').onclick = async () => {
+    if (!$('idemKey').value.trim()) $('idemKey').value = 'ui-' + uuid();
+    for (let i = 0; i < 2; i++) {
+      const fd = uploadForm(); if (!fd) return;
+      await call('POST', '/api/files', { form: fd, headers: idemHeaders() });
+    }
+    listFiles();
+  };
+
+  async function download(id) {
+    const path = `/api/files/${id}/download`;
+    const r = await call('GET', path, { raw: true });
+    if (!r.res) return;
+    const blob = await r.res.blob();
+    const cd = r.res.headers.get('Content-Disposition') || '';
+    const m = /filename\*=UTF-8''([^;]+)/i.exec(cd) || /filename="?([^";]+)"?/i.exec(cd);
+    const name = m ? decodeURIComponent(m[1]) : `file-${id}`;
+    logEntry('GET', path, r.res.status, r.ms, `${name} · ${fmtSize(blob.size)} · ${r.res.headers.get('Content-Type') || ''}`);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  async function listFiles() {
+    if (!token) return;
+    const r = await call('GET', '/api/files');
+    const rows = $('fileRows'); rows.innerHTML = '';
+    const list = Array.isArray(r.data?.data) ? r.data.data : [];
+    if (!list.length) { rows.innerHTML = '<tr><td colspan="6" class="muted">파일 없음</td></tr>'; return; }
+    for (const f of list) {
+      const tr = document.createElement('tr');
+      for (const v of [f.fileId, f.originalFileName, fmtSize(f.size), f.status, f.scanStatus]) {
+        const td = document.createElement('td'); td.textContent = v ?? ''; tr.append(td);
+      }
+      const act = document.createElement('td'); act.className = 'actions';
+      const mk = (label, fn, cls) => { const b = document.createElement('button'); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; };
+      act.append(
+        mk('조회', () => call('GET', `/api/files/${f.fileId}`)), ' ',
+        mk('다운로드', () => download(f.fileId)), ' ',
+        mk('삭제', async () => { if (confirm(`파일 ${f.fileId}을 삭제할까요? (논리 삭제)`)) { await call('DELETE', `/api/files/${f.fileId}`); listFiles(); } }, 'danger'),
+      );
+      tr.append(act); rows.append(tr);
+    }
+  }
+  $('btnList').onclick = listFiles;
+
+  const manualId = () => { const v = $('fileIdManual').value.trim(); if (!v) logEntry('GET', '-', 0, 0, '파일 ID를 입력한다.'); return v; };
+  $('btnGetManual').onclick = () => { const id = manualId(); if (id) call('GET', `/api/files/${id}`); };
+  $('btnDownManual').onclick = () => { const id = manualId(); if (id) download(id); };
+
+  $('btnOrphans').onclick = () => call('GET', `/api/admin/storage/orphans?minAgeMinutes=${encodeURIComponent($('minAge').value)}`);
+  $('btnCleanup').onclick = () => {
+    if (confirm('고아 객체를 실제로 지웁니다. 계속할까요?'))
+      call('POST', `/api/admin/storage/orphans/cleanup?minAgeMinutes=${encodeURIComponent($('minAge').value)}`);
+  };
+  $('btnClear').onclick = () => { $('log').innerHTML = '<p class="muted">요청을 보내면 상태 코드와 응답이 여기에 쌓인다.</p>'; };
+
+  $('email').value = `ui-${Date.now()}@example.com`;
+  setWho(); health(); if (token) listFiles();
+})();
+</script>
+</body>
+</html>
