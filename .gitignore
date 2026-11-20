@@ -27,3 +27,6 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Terraform backend settings (bucket name) per layer
+backend.hcl

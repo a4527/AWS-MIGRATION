@@ -1,21 +1,16 @@
-aws_region  = "ap-northeast-2"
+aws_region   = "us-east-1"
+# Required. Every resource gets this Owner tag; untagged resources may be deleted.
+owner        = "replace-with-owner-id"
 project_name = "fileshare"
 environment  = "dev"
 
-vpc_cidr           = "10.20.0.0/16"
-availability_zones = ["ap-northeast-2a", "ap-northeast-2c"]
-public_subnets     = ["10.20.0.0/24", "10.20.1.0/24"]
-private_subnets    = ["10.20.10.0/24", "10.20.11.0/24"]
-database_subnets   = ["10.20.20.0/24", "10.20.21.0/24"]
+# Apply ../dev-data first. This value must match ../dev-data/terraform.tfvars.
+file_bucket_name = "replace-with-globally-unique-fileshare-dev-bucket"
 
-file_bucket_name      = "replace-with-globally-unique-fileshare-dev-bucket"
-force_destroy_buckets = false
+# The DB password comes from the SSM parameter that ../dev-data creates, and the
+# JWT secret is generated into SSM here (SEC-01). Increase to rotate the JWT secret.
+app_jwt_secret_version = 1
 
-aurora_master_password = "replace-with-strong-development-password"
-app_jwt_secret         = "replace-with-strong-development-jwt-secret"
-
-github_repository = "replace-with-github-owner/aws-migration-project"
-github_branch     = "main"
 
 ecs_backend_image_tag = "latest"
 ecs_task_cpu          = 512
@@ -30,6 +25,5 @@ ecs_max_capacity      = 4
 
 file_processor_object_prefix = "files/"
 
-tags = {
-  Owner = "portfolio"
-}
+# Extra tags. Do not set Owner here; var.owner always wins.
+tags = {}

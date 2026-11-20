@@ -13,7 +13,10 @@ FROM eclipse-temurin:17-jre
 
 WORKDIR /app
 
-RUN useradd --system --uid 10001 --create-home appuser
+# pebble (Ubuntu service manager shipped in the base image) is not used and
+# carries Go stdlib findings, so drop it from the runtime image.
+RUN useradd --system --uid 10001 --create-home appuser \
+    && rm -f /usr/bin/pebble
 
 COPY --from=builder /workspace/build/libs/*.jar /app/app.jar
 

@@ -1,31 +1,31 @@
 output "vpc_id" {
   description = "VPC ID."
-  value       = module.vpc.vpc_id
+  value       = data.aws_vpc.this.id
 }
 
 output "public_subnet_ids" {
   description = "Public subnet IDs."
-  value       = module.vpc.public_subnet_ids
+  value       = local.public_subnet_ids
 }
 
 output "private_subnet_ids" {
   description = "Private subnet IDs."
-  value       = module.vpc.private_subnet_ids
+  value       = local.private_subnet_ids
 }
 
 output "database_subnet_ids" {
   description = "Database subnet IDs."
-  value       = module.vpc.database_subnet_ids
+  value       = local.database_subnet_ids
 }
 
 output "backend_ecr_repository_url" {
   description = "ECR repository URL for the Spring Boot backend image."
-  value       = module.ecr.repository_urls["backend"]
+  value       = data.aws_ecr_repository.backend.repository_url
 }
 
 output "file_bucket_name" {
   description = "S3 bucket used for uploaded files."
-  value       = module.s3.bucket_name
+  value       = data.aws_s3_bucket.files.bucket
 }
 
 output "application_files_policy_arn" {
@@ -53,11 +53,6 @@ output "ecs_service_name" {
   value       = module.ecs.service_name
 }
 
-output "github_actions_deploy_role_arn" {
-  description = "IAM role ARN to store as the GitHub Actions AWS_DEPLOY_ROLE_ARN secret."
-  value       = module.github_actions.deploy_role_arn
-}
-
 output "application_role_arn" {
   description = "ECS task role ARN used by the application."
   value       = module.ecs.task_role_arn
@@ -80,7 +75,7 @@ output "application_domain_name" {
 
 output "aurora_cluster_endpoint" {
   description = "Aurora PostgreSQL writer endpoint."
-  value       = module.aurora.cluster_endpoint
+  value       = data.aws_rds_cluster.this.endpoint
 }
 
 output "redis_primary_endpoint" {
@@ -96,4 +91,9 @@ output "file_processor_function_name" {
 output "file_processor_log_group_name" {
   description = "CloudWatch log group for the file processor Lambda."
   value       = module.file_processor.log_group_name
+}
+
+output "ecs_task_definition_template_arn" {
+  description = "Terraform task definition template for initial deployment or explicit configuration rollout."
+  value       = module.ecs.task_definition_template_arn
 }

@@ -1,11 +1,8 @@
 package com.example.fileshare.auth.application;
 
-import com.example.fileshare.auth.api.LoginResponse;
-import com.example.fileshare.auth.api.SignupRequest;
 import com.example.fileshare.common.error.ErrorCode;
 import com.example.fileshare.common.exception.BusinessException;
 import com.example.fileshare.config.security.JwtTokenProvider;
-import com.example.fileshare.user.api.UserResponse;
 import com.example.fileshare.user.domain.User;
 import com.example.fileshare.user.domain.UserRole;
 import com.example.fileshare.user.repository.UserRepository;
@@ -26,17 +23,17 @@ public class AuthService {
         this.jwtTokenProvider = jwtTokenProvider;
     }
 
-    public User signup(SignupRequest request) {
-        if (userRepository.existsByEmail(request.email())) {
+    public User signup(String email, String password, String name) {
+        if (userRepository.existsByEmail(email)) {
             throw new BusinessException(ErrorCode.AUTH_DUPLICATED_EMAIL);
         }
 
         Instant now = Instant.now();
         User user = new User(
                 null,
-                request.email(),
-                passwordEncoder.encode(request.password()),
-                request.name(),
+                email,
+                passwordEncoder.encode(password),
+                name,
                 UserRole.USER,
                 now,
                 now
@@ -44,7 +41,7 @@ public class AuthService {
         return userRepository.save(user);
     }
 
-    public LoginResponse login(String email, String password) {
+    public LoginResult login(String email, String password) {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new BusinessException(ErrorCode.AUTH_INVALID_CREDENTIALS));
 
@@ -53,11 +50,6 @@ public class AuthService {
         }
 
         String accessToken = jwtTokenProvider.generate(user);
-        return new LoginResponse(
-                accessToken,
-                "Bearer",
-                jwtTokenProvider.expiresInSeconds(),
-                UserResponse.from(user)
-        );
+        return new LoginResult(user, accessToken, "Bearer", jwtTokenProvider.expiresInSeconds());
     }
 }

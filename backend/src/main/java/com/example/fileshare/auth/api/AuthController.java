@@ -1,6 +1,7 @@
 package com.example.fileshare.auth.api;
 
 import com.example.fileshare.auth.application.AuthService;
+import com.example.fileshare.auth.application.LoginResult;
 import com.example.fileshare.common.api.ApiResponse;
 import com.example.fileshare.user.api.UserResponse;
 import jakarta.validation.Valid;
@@ -21,11 +22,18 @@ public class AuthController {
 
     @PostMapping("/signup")
     public ApiResponse<UserResponse> signup(@Valid @RequestBody SignupRequest request) {
-        return ApiResponse.ok(UserResponse.from(authService.signup(request)), "User created");
+        return ApiResponse.ok(UserResponse.from(authService.signup(request.email(), request.password(), request.name())), "User created");
     }
 
     @PostMapping("/login")
     public ApiResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        return ApiResponse.ok(authService.login(request.email(), request.password()), "Login successful");
+        LoginResult result = authService.login(request.email(), request.password());
+        LoginResponse response = new LoginResponse(
+                result.accessToken(),
+                result.tokenType(),
+                result.expiresInSeconds(),
+                UserResponse.from(result.user())
+        );
+        return ApiResponse.ok(response, "Login successful");
     }
 }

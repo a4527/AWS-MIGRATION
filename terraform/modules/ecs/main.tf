@@ -21,6 +21,25 @@ resource "aws_iam_role_policy_attachment" "execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# SEC-01: only these two parameters. Both use the AWS managed aws/ssm key, whose
+# key policy already allows decryption through SSM, so no kms:Decrypt is added.
+data "aws_iam_policy_document" "execution_secrets" {
+  statement {
+    sid     = "ReadApplicationSecrets"
+    actions = ["ssm:GetParameters"]
+    resources = [
+      var.database_password_parameter_arn,
+      var.app_jwt_secret_parameter_arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  name   = "${var.name_prefix}-ecs-execution-secrets"
+  role   = aws_iam_role.execution.id
+  policy = data.aws_iam_policy_document.execution_secrets.json
+}
+
 resource "aws_iam_role" "task" {
   name               = "${var.name_prefix}-ecs-task"
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume_role.json
@@ -181,10 +200,6 @@ resource "aws_ecs_task_definition" "application" {
           value = var.database_username
         },
         {
-          name  = "DB_PASSWORD"
-          value = var.database_password
-        },
-        {
           name  = "REDIS_HOST"
           value = var.redis_host
         },
@@ -195,10 +210,19 @@ resource "aws_ecs_task_definition" "application" {
         {
           name  = "REDIS_SSL_ENABLED"
           value = "true"
+        }
+      ]
+
+      # SEC-01: resolved by the execution role when the task starts. The task
+      # definition holds only parameter ARNs.
+      secrets = [
+        {
+          name      = "DB_PASSWORD"
+          valueFrom = var.database_password_parameter_arn
         },
         {
-          name  = "APP_JWT_SECRET"
-          value = var.app_jwt_secret
+          name      = "APP_JWT_SECRET"
+          valueFrom = var.app_jwt_secret_parameter_arn
         }
       ]
 
@@ -223,6 +247,16 @@ resource "aws_ecs_service" "application" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
 
+  # Tasks inherit the service tags (including Owner).
+  enable_ecs_managed_tags = true
+  propagate_tags          = "SERVICE"
+
+  lifecycle {
+    # CD owns the deployed revision; Application Auto Scaling owns task count.
+    # These configured values still apply when creating the service.
+    ignore_changes = [task_definition, desired_count]
+  }
+
   network_configuration {
     assign_public_ip = false
     security_groups  = [var.application_security_group_id]
@@ -237,6 +271,7 @@ resource "aws_ecs_service" "application" {
 
   depends_on = [
     aws_iam_role_policy_attachment.execution,
+    aws_iam_role_policy.execution_secrets,
     aws_lb_listener.http,
     aws_lb_listener.https,
   ]

@@ -45,6 +45,16 @@ variable "ecs_execution_role_arn" {
   type        = string
 }
 
+variable "aurora_cluster_arn" {
+  description = "Aurora cluster ARN the deploy job reads to wake the database before the first task (DEC-010)."
+  type        = string
+}
+
+variable "aurora_instance_arn_pattern" {
+  description = "Aurora instance ARN pattern whose log list the deploy job reads to trigger resume (DEC-010)."
+  type        = string
+}
+
 variable "tags" {
   description = "Common resource tags."
   type        = map(string)

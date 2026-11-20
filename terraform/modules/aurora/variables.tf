@@ -8,9 +8,9 @@ variable "database_subnet_ids" {
   type        = list(string)
 }
 
-variable "security_group_ids" {
-  description = "Security groups attached to Aurora."
-  type        = list(string)
+variable "vpc_id" {
+  description = "VPC ID for the Aurora security group."
+  type        = string
 }
 
 variable "database_name" {
@@ -23,10 +23,16 @@ variable "master_username" {
   type        = string
 }
 
-variable "master_password" {
-  description = "Aurora master password."
+variable "master_password_wo" {
+  description = "Aurora master password, write-only. Pass an ephemeral value."
   type        = string
   sensitive   = true
+  ephemeral   = true
+}
+
+variable "master_password_wo_version" {
+  description = "Increase to send master_password_wo to Aurora again (rotation)."
+  type        = number
 }
 
 variable "engine_version" {
@@ -40,8 +46,30 @@ variable "instance_count" {
 }
 
 variable "min_capacity" {
-  description = "Aurora Serverless v2 minimum ACUs."
+  description = "Aurora Serverless v2 minimum ACUs. 0 enables auto-pause."
   type        = number
+
+  validation {
+    condition     = var.min_capacity >= 0
+    error_message = "min_capacity must be 0 or greater."
+  }
+}
+
+variable "seconds_until_auto_pause" {
+  description = "Idle seconds before Aurora pauses when min_capacity is 0 (300-86400)."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.seconds_until_auto_pause >= 300 && var.seconds_until_auto_pause <= 86400
+    error_message = "seconds_until_auto_pause must be between 300 and 86400."
+  }
+}
+
+variable "deletion_protection" {
+  description = "Whether the cluster is protected from deletion."
+  type        = bool
+  default     = true
 }
 
 variable "max_capacity" {

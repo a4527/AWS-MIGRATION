@@ -29,6 +29,11 @@ public class JpaFileMetadataRepositoryAdapter implements FileMetadataRepository 
     }
 
     @Override
+    public Optional<FileMetadata> findByStoragePath(String storagePath) {
+        return jpaRepository.findFirstByStoragePath(storagePath).map(FileMetadataEntity::toDomain);
+    }
+
+    @Override
     public List<FileMetadata> findVisibleByOwnerId(Long ownerId) {
         return jpaRepository.findByOwnerIdAndStatusNotOrderByCreatedAtDesc(ownerId, FileStatus.DELETED)
                 .stream()

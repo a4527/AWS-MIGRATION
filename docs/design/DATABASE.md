@@ -72,6 +72,7 @@
 - `idx_files_scan_status` on `scan_status`
 - `idx_files_created_at` on `created_at`
 - `idx_files_deleted_at` on `deleted_at`
+- `idx_files_storage_path` on `storage_path`: 업로드 결과 확인과 고아 객체 점검에서 저장 위치로 조회한다.
 
 ## 권한 테이블
 
@@ -88,6 +89,34 @@
 - `idx_file_permissions_file_id` on `file_id`
 - `idx_file_permissions_user_id` on `user_id`
 - `uq_file_permissions_file_user` on (`file_id`, `user_id`)
+
+## 업로드 요청 테이블
+
+### `upload_requests`
+
+`Idempotency-Key`가 있는 업로드 요청을 기록한다. 결정 근거는 [ADR-001](../adr/001-UPLOAD-IDEMPOTENCY-KEY.md)이다.
+
+- `id` BIGSERIAL, PK
+- `owner_id` BIGINT, NOT NULL, 요청한 사용자
+- `idempotency_key` VARCHAR(100), NOT NULL
+- `request_hash` VARCHAR(64), NOT NULL, 파일명·크기·설명·본문 SHA-256의 SHA-256
+- `status` VARCHAR(20), NOT NULL, `IN_PROGRESS` / `COMPLETED` / `FAILED`
+- `storage_path` VARCHAR(500), NULL, 이 시도가 쓰는 객체 위치. 객체를 쓰기 전에 기록한다.
+- `file_id` BIGINT, NULL, 완료 시 `files.id`
+- `created_at`, `updated_at`, `expires_at` TIMESTAMP WITH TIME ZONE, NOT NULL
+- `version` BIGINT, NOT NULL, 재시작 경합 방지용 조건부 갱신 값
+
+### 인덱스와 제약
+
+- `uk_upload_requests_owner_key` UNIQUE (`owner_id`, `idempotency_key`)
+- `idx_upload_requests_status_updated_at` on (`status`, `updated_at`): 오래된 진행 중 요청 조회
+- `idx_upload_requests_expires_at` on `expires_at`: 만료 기록 정리
+
+### 갱신 규칙
+
+- 완료·실패 전환은 `status = IN_PROGRESS`이고 `storage_path`가 해당 시도와 같을 때만 반영한다. 완료는 `files` 저장과 같은 트랜잭션에서 수행해 하나라도 실패하면 함께 롤백한다.
+- 실패, 만료, 처리 중 판단 기준(기본 15분) 초과 기록은 `version`이 그대로일 때만 새 시도로 다시 시작한다.
+- `expires_at`(기본 생성 후 24시간)이 지난 행은 주기 작업이 지운다. `files` 행은 지우지 않는다.
 
 ## 업로드 로그
 
@@ -129,6 +158,10 @@
   - `READ`
   - `WRITE`
   - `OWNER`
+- `upload_requests.status`
+  - `IN_PROGRESS`
+  - `COMPLETED`
+  - `FAILED`
 - `files.scan_status`
   - `PENDING`
   - `CLEAN`
@@ -141,18 +174,17 @@
 - 삭제는 기본적으로 논리 삭제를 사용하고, 물리 삭제는 후속 정리로 분리한다.
 - Aurora 마이그레이션을 고려해 PostgreSQL 호환 SQL을 유지한다.
 
-## Day 1 기준
+## 구현 상태
 
-- 파일 상태값이 요구사항 문서와 일치한다.
-- 삭제 정책이 논리 삭제 중심으로 고정된다.
-- 이후 API 문서에서 사용하는 파일 상태와 권한 개념이 동일해야 한다.
-- 테이블과 컬럼 수준의 초안이 고정된다.
+스키마는 별도 마이그레이션 도구 없이 Hibernate `ddl-auto=update`가 JPA Entity 기준으로 만든다(`postgres` 프로필). 기본 프로필은 인메모리 저장소를 쓴다.
 
-## Day 5 구현 기준
+| 테이블·컬럼 | 상태 |
+| --- | --- |
+| `users` | 구현 |
+| `files` | 구현. 단 `extracted_metadata`, `scanned_at`, `quarantined_at` 컬럼과 DB 기본값(`uploaded`, `PENDING`)은 Entity에 없다. 애플리케이션이 업로드 시 `AVAILABLE`·`CLEAN`을 직접 넣는다 |
+| `upload_requests` | 구현 (FILE-05) |
+| `file_permissions`, `upload_logs` | 미구현. 권한 공유·감사 로그를 위한 예정 설계다 |
 
-- `users`와 `files` 테이블은 JPA 엔티티로 구현한다.
-- `postgres` 프로필을 활성화하면 `UserRepository`와 `FileMetadataRepository`의 JPA 어댑터가 사용된다.
-- 기본 프로필은 로컬 개발과 테스트 편의를 위해 인메모리 도메인 저장소를 유지한다.
-- 테스트 환경에서는 H2의 PostgreSQL compatibility mode를 사용해 JPA 매핑을 검증한다.
-- 운영 PostgreSQL 연결 정보는 `application-postgres.yml`의 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` 환경변수로 주입한다.
-- Day 5 구현 테이블은 `users`, `files`이며, `file_permissions`, `upload_logs`는 후속 권한 공유와 운영 감사 로그 구현 시 JPA 엔티티로 확장한다.
+- 상태값은 DB에 대문자 enum 이름(`AVAILABLE`, `DELETED` 등)으로 저장되고 API 응답에서 소문자로 바뀐다.
+- 외래 키 제약은 Entity에 선언되어 있지 않다. `files.owner_id`와 `users.id`의 관계는 애플리케이션이 보장한다.
+- 이전 Day별 구현 기준은 [이전 문서 요약](../LEGACY.md)에 남겼다.

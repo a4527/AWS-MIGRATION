@@ -1,905 +1,650 @@
-기능·저장소·장애·성능의 검증 절차를 관리한다. 실행 결과는 수행일의 작업일지에 기록하며 절차 작성과 검증 성공을 구분한다.
+현재 코드 기준의 검증 시나리오와 판정 기준이다. 실행 결과는 수행일의 작업일지에 시나리오 ID와 함께 기록하며, 이 문서의 작성은 검증 성공을 뜻하지 않는다. 이전 Day 7·13 절차는 [이전 문서 요약](../LEGACY.md#이전-검증-절차-요약)에 남겼다.
 
-## 온프레미스 검증
+## 시나리오 구성
 
-Day 7 온프레미스 검증을 직접 수행하기 위한 수동 테스트 절차다.
+| 묶음 | 내용 | 실행 환경 | 관련 작업 |
+| --- | --- | --- | --- |
+| V-ONP | 스택 기동 확인 | 온프레미스 | ONP-01 |
+| V-FUNC | 인증·사용자·파일 API 기능 | 온프레미스, AWS | ONP-02, VERIFY-01 |
+| V-DATA | DB 행·객체 키·캐시 키 계약 | 온프레미스, AWS | ONP-02, VERIFY-01 |
+| V-IDEM | `Idempotency-Key` 동작 | 온프레미스, AWS | ONP-03, FILE-05 |
+| V-FAIL | Redis·PostgreSQL·MinIO·backend 장애 주입 | 온프레미스 | ONP-03, FILE-01/02 |
+| V-ADMIN | 관리자 고아 객체 점검 | 온프레미스, AWS | ONP-03, FILE-01 |
+| V-LOC | AWS 전용 경로(S3 SDK·컨테이너 한도·DB 재개 지연·Lambda·CD 태그) 사전 확인 | 로컬 | PORT-01, VERIFY-01 선행 |
+| V-MIG | 데이터 이전 전후 비교 | AWS | MIG-02 |
+| V-AWS | AWS 진입점·후처리·장애 복구·알람 | AWS | VERIFY-01/02 |
+| V-PERF | smoke 성능·자원 사용 | 온프레미스, AWS | PERF-01, FILE-04 |
 
-자동화 스크립트로 한 번에 실행하지 않고, 아래 순서대로 하나씩 실행하며 응답과 저장소 상태를 확인한다.
+각 시나리오는 독립적으로 다시 실행할 수 있도록 매번 새 이메일·키를 쓴다. 자동 테스트(`./gradlew test`)로 확인한 범위는 [작업일지](../worklogs/2026-11-17.md#file-01020405-구현)를 따르며, 아래 시나리오는 실제 서버에서 같은 동작을 확인하는 용도다.
 
-### 1. Compose 스택 시작
+## 0. 공통 준비
+
+필요 도구: `curl`, `jq`, `sha256sum`, Docker Compose. 저장소 루트에서 실행한다.
 
 ```bash
-docker compose up --build -d
+cd ~/AWS-MIGRATION            # 저장소 루트
+set -a; [ -f .env ] && . ./.env; set +a
+
+BASE_URL=${BASE_URL:-http://localhost:8080}
+RUN_ID=$(date +%s)
+PASSWORD='Password123!'
+
+signup() {  # signup <email> <name>
+  curl -s -X POST "$BASE_URL/api/auth/signup" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$1\",\"password\":\"$PASSWORD\",\"name\":\"$2\"}"
+}
+login() {   # login <email>  → access token 출력
+  curl -s -X POST "$BASE_URL/api/auth/login" -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$1\",\"password\":\"$PASSWORD\"}" | jq -r '.data.accessToken'
+}
+api() {     # api <token> <curl 인자...>
+  local token=$1; shift
+  curl -s -H "Authorization: Bearer $token" "$@"
+}
+psql_q() {  # 온프레미스 PostgreSQL 조회
+  docker compose exec -T postgres psql -U "${POSTGRES_USER:-fileshare}" -d "${POSTGRES_DB:-fileshare}" -At -c "$1"
+}
+mc_cmd() {  # 온프레미스 MinIO 클라이언트
+  docker compose --profile tools run --rm mc "$1"
+}
+redis_cmd() {
+  docker compose exec -T redis redis-cli "$@"
+}
 ```
 
-상태 확인:
+응답 형식: 성공은 `{"success":true,"data":...,"message":...}`, 실패는 `{"success":false,"errorCode":...,"message":...}`다. HTTP 상태 코드를 함께 보려면 `curl -s -o /dev/stderr -w '%{http_code}\n'`을 쓴다.
+
+## 1. 온프레미스 기동
+
+### V-ONP-01 스택 기동
+
+[온프레미스 구축](DEPLOYMENT.md#3-온프레미스-구축)으로 스택을 띄운 뒤 확인한다.
 
 ```bash
 docker compose ps
+curl -s "$BASE_URL/api/health" | jq
+curl -s "$BASE_URL/actuator/health" | jq
+psql_q "select table_name from information_schema.tables where table_schema='public' order by 1;"
+docker volume ls | grep -E 'postgres-data|redis-data|minio-data'
 ```
 
-확인 기준:
+판정:
 
-- `postgres`, `redis`가 `healthy` 상태다.
-- `backend`, `nginx`, `minio`가 `Up` 상태다.
+- `postgres`, `redis`는 `healthy`, `minio`·`backend`·`nginx`는 `running`이다.
+- 두 health 응답이 `UP`이다.
+- 테이블 목록에 `users`, `files`, `upload_requests`가 있다.
+- 볼륨 3개가 있다.
 
-### 2. Health 확인
+## 2. 기능 시나리오
+
+같은 명령을 AWS에서도 `BASE_URL`만 바꿔 실행한다.
+
+### V-FUNC-01 회원가입·로그인·사용자 조회
 
 ```bash
-curl http://localhost:8080/api/health
+USER_EMAIL="user-$RUN_ID@example.com"
+signup "$USER_EMAIL" "검증 사용자" | jq
+TOKEN=$(login "$USER_EMAIL"); echo "${TOKEN:0:20}..."
+api "$TOKEN" "$BASE_URL/api/users/me" | jq
+api "$TOKEN" -X PATCH "$BASE_URL/api/users/me" -H 'Content-Type: application/json' -d '{"name":"검증 사용자2"}' | jq '.data.name'
+signup "$USER_EMAIL" "중복" | jq '.errorCode'
 ```
 
-기대 결과:
+판정: 가입 응답의 `role`이 `USER`, 로그인 토큰이 있음, `me`가 같은 이메일, 이름 변경 반영, 중복 가입은 `AUTH_DUPLICATED_EMAIL`(409).
 
-```json
-{
-  "success": true,
-  "data": {
-    "status": "UP"
-  },
-  "message": "OK"
-}
-```
-
-Actuator health:
+### V-FUNC-02 업로드·목록·단건·다운로드
 
 ```bash
-curl http://localhost:8080/actuator/health
+printf 'validation %s\n' "$RUN_ID" > "sample-$RUN_ID.txt"
+UPLOAD=$(api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt" -F "description=V-FUNC-02")
+echo "$UPLOAD" | jq
+FILE_ID=$(echo "$UPLOAD" | jq -r '.data.fileId')
+
+api "$TOKEN" "$BASE_URL/api/files" | jq '.data | length'
+api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq '.data | {fileId,status,scanStatus,storedFileName}'
+api "$TOKEN" "$BASE_URL/api/files/$FILE_ID/download" -o "down-$RUN_ID.txt"
+sha256sum "sample-$RUN_ID.txt" "down-$RUN_ID.txt"
 ```
 
-기대 결과:
+판정: 업로드 응답 `status`가 `available`, `scanStatus`가 `CLEAN`, 목록에 포함, 두 파일의 해시가 같다.
 
-```json
-{
-  "status": "UP"
-}
-```
-
-### 3. 회원가입
-
-이미 같은 이메일로 가입했다면 이메일 뒤 숫자를 바꾼다.
+### V-FUNC-03 권한과 입력 검증
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/signup \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user1@example.com","password":"Password123!","name":"홍길동"}'
+OTHER_EMAIL="other-$RUN_ID@example.com"; signup "$OTHER_EMAIL" "다른 사용자" > /dev/null
+OTHER_TOKEN=$(login "$OTHER_EMAIL")
+
+api "$OTHER_TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq '.errorCode'                 # 남의 파일
+curl -s "$BASE_URL/api/files" | jq '.errorCode'                                      # 토큰 없음
+api "$TOKEN" "$BASE_URL/api/users/1" | jq '.errorCode'                               # 관리자 전용
+printf 'x' > "bad-$RUN_ID.exe"
+api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@bad-$RUN_ID.exe" | jq '.errorCode'
+head -c 10485761 /dev/zero > "big-$RUN_ID.txt"
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" -X POST "$BASE_URL/api/files" -F "file=@big-$RUN_ID.txt"
 ```
 
-확인 기준:
+판정: `AUTH_ACCESS_DENIED`(403), `AUTH_INVALID_TOKEN`(401), `AUTH_ACCESS_DENIED`(403), `FILE_INVALID_TYPE`(400). 10MB 초과 파일은 nginx가 먼저 `413`으로 막는다(`client_max_body_size 10m`). AWS(ALB)에서는 애플리케이션까지 도달해 `FILE_TOO_LARGE`(400) 또는 Spring의 multipart 한도 오류가 날 수 있으므로 실제 코드를 기록한다.
 
-- `success`가 `true`다.
-- `data.email`이 요청한 이메일과 같다.
-- `data.role`이 `USER`다.
-
-### 4. 로그인 및 토큰 저장
-
-`jq`가 있을 때:
+### V-FUNC-04 삭제
 
 ```bash
-ACCESS_TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user1@example.com","password":"Password123!"}' \
-  | jq -r '.data.accessToken')
+api "$TOKEN" -X DELETE "$BASE_URL/api/files/$FILE_ID" | jq '.data'
+api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq '.errorCode'
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/files/$FILE_ID/download"
+api "$TOKEN" "$BASE_URL/api/files" | jq "[.data[] | select(.fileId==$FILE_ID)] | length"
 ```
 
-토큰 확인:
+판정: 삭제 응답 `status`가 `deleted`, 이후 조회 `RESOURCE_NOT_FOUND`, 다운로드 `404`, 목록에서 제외.
+
+## 3. 저장소 계약
+
+### V-DATA-01 DB 행과 객체
+
+V-FUNC-02 직후(삭제 전 또는 새 파일로) 실행한다.
 
 ```bash
-echo "$ACCESS_TOKEN"
+psql_q "select id, owner_id, stored_file_name, storage_path, status, scan_status from files where id=$FILE_ID;"
+STORAGE_PATH=$(psql_q "select storage_path from files where id=$FILE_ID;")
+mc_cmd "mc stat local/${MINIO_BUCKET:-files}/$STORAGE_PATH"
+mc_cmd "mc cat local/${MINIO_BUCKET:-files}/$STORAGE_PATH" | sha256sum
 ```
 
-`jq`가 없으면 로그인 응답에서 `data.accessToken` 값을 직접 복사한다.
+판정: `storage_path`는 `<uuid>.<확장자>`이고 같은 키의 객체가 버킷에 있으며 해시가 원본과 같다. 삭제한 파일도 행(`status=DELETED`)과 객체가 남는다(논리 삭제).
+
+### V-DATA-02 캐시 키와 버전
 
 ```bash
-curl -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user1@example.com","password":"Password123!"}'
+api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" > /dev/null
+redis_cmd GET "files:metadata:$FILE_ID" | jq '{id,status,version}'
+redis_cmd PTTL "files:metadata:$FILE_ID"
 ```
 
-직접 복사한 뒤:
+판정: 키 형식 `files:metadata:{fileId}`, 값에 `version`(updatedAt 마이크로초) 포함, TTL 300초 이하. 삭제 후에는 키가 사라지지 않고 `status`가 `DELETED`, `version`이 더 커진다.
+
+## 4. 멱등성
+
+### V-IDEM-01 같은 키 재전송
 
 ```bash
-ACCESS_TOKEN='<login-response-access-token>'
+KEY="idem-$RUN_ID"
+printf 'idem %s\n' "$RUN_ID" > "idem-$RUN_ID.txt"
+for i in 1 2; do
+  curl -s -D "h$i.txt" -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY" \
+    -X POST "$BASE_URL/api/files" -F "file=@idem-$RUN_ID.txt" | jq -c '.data.fileId'
+  grep -i idempotent-replayed "h$i.txt" || echo "(no replay header)"
+done
+psql_q "select status, file_id, storage_path from upload_requests where idempotency_key='$KEY';"
 ```
 
-### 5. 현재 사용자 조회
+판정: 두 응답의 `fileId`가 같고, 두 번째에만 `Idempotent-Replayed: true`, `upload_requests` 행이 `COMPLETED`, 파일 행·객체는 하나다.
+
+### V-IDEM-02 같은 키, 다른 요청
 
 ```bash
-curl http://localhost:8080/api/users/me \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+printf 'changed\n' > "idem2-$RUN_ID.txt"
+api "$TOKEN" -H "Idempotency-Key: $KEY" -X POST "$BASE_URL/api/files" -F "file=@idem2-$RUN_ID.txt" | jq '.errorCode'
+api "$TOKEN" -H "Idempotency-Key: bad key" -X POST "$BASE_URL/api/files" -F "file=@idem-$RUN_ID.txt" | jq '.errorCode'
+api "$OTHER_TOKEN" -H "Idempotency-Key: $KEY" -X POST "$BASE_URL/api/files" -F "file=@idem-$RUN_ID.txt" | jq '.data.fileId'
 ```
 
-확인 기준:
+판정: `IDEMPOTENCY_KEY_MISMATCH`(422), `VALIDATION_ERROR`(400), 다른 사용자는 같은 키로 새 파일이 생긴다(키는 사용자별).
 
-- 현재 로그인한 사용자 정보가 반환된다.
-
-### 6. 사용자 이름 수정
+### V-IDEM-03 동시 요청
 
 ```bash
-curl -X PATCH http://localhost:8080/api/users/me \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"홍길동2"}'
+head -c 9000000 /dev/urandom > "conc-$RUN_ID.txt"
+KEY2="conc-$RUN_ID"
+for i in 1 2; do
+  curl -s -o "conc$i.json" -D "conc$i.h" -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: $KEY2" \
+    -X POST "$BASE_URL/api/files" -F "file=@conc-$RUN_ID.txt" &
+done; wait
+head -1 conc1.h conc2.h; grep -i retry-after conc1.h conc2.h; jq -c '{fileId: .data.fileId, errorCode}' conc1.json conc2.json
 ```
 
-확인 기준:
+판정: 하나는 `200`, 다른 하나는 `409 IDEMPOTENCY_IN_PROGRESS`와 `Retry-After: 5` 또는 `200` 재전송(먼저 끝난 경우)이다. 어느 경우에도 파일 행은 하나다. 로컬에서 경합이 재현되지 않으면 결과를 그대로 기록한다(자동 테스트로 보완됨).
 
-- `data.name`이 `홍길동2`로 변경된다.
+## 5. 장애 주입
 
-### 7. 파일 업로드
+각 시나리오 후 `docker compose ps`로 모든 서비스가 다시 정상인지 확인한다. 로그는 `docker compose logs backend --since 5m | grep -E 'Cache|Upload|Compensating'`로 본다.
 
-테스트 파일 생성:
+### V-FAIL-01 Redis 중지 중 조회·다운로드·삭제
 
 ```bash
-printf 'hello file api\n' > sample.txt
-```
-
-업로드:
-
-```bash
-UPLOAD_RESPONSE=$(curl -s -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.txt" \
-  -F "description=manual test file")
-```
-
-응답 확인:
-
-```bash
-echo "$UPLOAD_RESPONSE"
-```
-
-응답의 파일 ID를 저장한다.
-
-`jq`가 있을 때:
-
-```bash
-FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.fileId')
-```
-
-직접 저장할 때:
-
-```bash
-FILE_ID='<upload-response-file-id>'
-```
-
-확인 기준:
-
-- `data.fileId`가 있다.
-- `data.originalFileName`이 `sample.txt`다.
-- `data.status`가 `available` 상태다.
-
-### 8. 파일 목록 조회
-
-```bash
-curl http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-확인 기준:
-
-- 업로드한 파일이 목록에 포함된다.
-
-### 9. 파일 메타데이터 단건 조회
-
-```bash
-curl http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-확인 기준:
-
-- `fileId`가 `${FILE_ID}`와 같다.
-- 이 요청 이후 Redis 캐시 확인이 가능하다.
-
-### 10. 파일 다운로드
-
-```bash
-curl -L http://localhost:8080/api/files/${FILE_ID}/download \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -o downloaded-sample.txt
-```
-
-다운로드 결과 확인:
-
-```bash
-cat downloaded-sample.txt
-```
-
-기대 결과:
-
-```text
-hello file api
-```
-
-### 11. PostgreSQL 저장 확인
-
-```bash
-docker compose exec postgres psql -U fileshare -d fileshare
-```
-
-`psql` 안에서:
-
-```sql
-SELECT id, email, name, role, created_at
-FROM users
-ORDER BY id;
-
-SELECT id, owner_id, original_file_name, stored_file_name, storage_path, status, scan_status, created_at
-FROM files
-ORDER BY id;
-```
-
-종료:
-
-```sql
-\q
-```
-
-확인 기준:
-
-- 가입한 사용자가 `users`에 있다.
-- 업로드한 파일 메타데이터가 `files`에 있다.
-- `storage_path` 값이 MinIO object key로 사용된다.
-
-### 12. Redis 캐시 확인
-
-파일 업로드 또는 단건 조회 이후 실행한다.
-
-```bash
-docker compose exec redis redis-cli KEYS 'files:metadata:*'
-```
-
-특정 파일 캐시 확인:
-
-```bash
-docker compose exec redis redis-cli GET "files:metadata:${FILE_ID}"
-docker compose exec redis redis-cli TTL "files:metadata:${FILE_ID}"
-```
-
-확인 기준:
-
-- 캐시 키 형식은 `files:metadata:{fileId}`다.
-- TTL은 남은 초 단위로 표시된다.
-
-### 13. MinIO 저장 확인
-
-브라우저에서 접속한다.
-
-```text
-http://localhost:9001
-```
-
-로그인:
-
-```text
-Username: minioadmin
-Password: minioadmin
-```
-
-확인 기준:
-
-- 첫 업로드 이후 `files` 버킷이 생성되어 있다.
-- PostgreSQL `files.storage_path`와 같은 object key가 버킷 안에 있다.
-
-### 14. 파일 삭제
-
-```bash
-curl -X DELETE http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-확인 기준:
-
-- 삭제 응답이 성공한다.
-- 파일은 물리 삭제가 아니라 메타데이터 상태가 삭제 상태로 바뀐다.
-
-삭제 후 조회:
-
-```bash
-curl http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-기대 결과:
-
-- `RESOURCE_NOT_FOUND`가 반환된다.
-
-### 15. 실패 케이스 확인
-
-#### 인증 없이 보호 API 호출
-
-```bash
-curl http://localhost:8080/api/users/me
-```
-
-기대 결과:
-
-- `AUTH_INVALID_TOKEN`
-
-#### 허용되지 않는 확장자 업로드
-
-```bash
-printf 'not allowed\n' > sample.exe
-
-curl -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.exe"
-```
-
-기대 결과:
-
-- `FILE_INVALID_TYPE`
-
-#### 일반 사용자로 특정 사용자 조회
-
-```bash
-curl http://localhost:8080/api/users/1 \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
-```
-
-기대 결과:
-
-- 일반 `USER` 토큰이면 `AUTH_ACCESS_DENIED`
-
-### 16. 스택 중지
-
-컨테이너와 네트워크만 내린다. 볼륨 데이터는 유지된다.
-
-```bash
-docker compose down
-```
-
-데이터까지 초기화할 때만 사용한다.
-
-```bash
-docker compose down -v
-```
-
-### 17. 장애 시나리오 수동 점검
-
-장애 시나리오는 정상 기능 검증이 끝난 뒤 선택적으로 수행한다. 각 시나리오 후에는 서비스를 다시 시작한다.
-
-#### Backend 중지
-
-```bash
-docker compose stop backend
-curl -i http://localhost:8080/api/health
-docker compose start backend
-```
-
-확인 기준:
-
-- Nginx는 떠 있지만 백엔드 upstream 연결 실패가 발생한다.
-- `docker compose logs nginx`에서 upstream 오류를 확인할 수 있다.
-
-#### PostgreSQL 중지
-
-```bash
-docker compose stop postgres
-curl -i -X POST http://localhost:8080/api/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"user1@example.com","password":"Password123!"}'
-docker compose start postgres
-```
-
-확인 기준:
-
-- DB가 필요한 API가 실패한다.
-- `docker compose logs backend`에서 DB 연결 오류를 확인할 수 있다.
-
-#### Redis 중지
-
-```bash
+NEW=$(api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt" | jq -r '.data.fileId')
 docker compose stop redis
-curl -i http://localhost:8080/api/files/${FILE_ID} \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}"
+time api "$TOKEN" "$BASE_URL/api/files/$NEW" | jq '.data.status'
+api "$TOKEN" "$BASE_URL/api/files/$NEW/download" | sha256sum
+time api "$TOKEN" -X DELETE "$BASE_URL/api/files/$NEW" | jq '.data.status'
 docker compose start redis
 ```
 
-확인 기준:
+판정: 조회·다운로드·삭제가 모두 성공한다. 조회는 약 1초, 삭제는 약 2.5초 이내에 끝난다(Redis 명령 타임아웃 500ms × 캐시 호출 수, 삭제는 즉시 재시도 3회 포함). 2026-11-17 실행에서 조회 1.1초, 삭제 2.2초였다. 로그에 `Cache read failed; falling back to database`, `retrying in background`가 남는다.
 
-- 현재 구현에서는 Redis 캐시 접근 실패가 API 오류로 이어질 수 있다.
-- 운영 개선 시 Redis 장애를 원본 DB 조회로 우회하는 보완이 필요하다.
+### V-FAIL-02 Redis 일시 중지 중 삭제한 파일이 다시 보이지 않음
 
-#### MinIO 중지
+삭제 전에 캐시에 `available` 값이 있는 상태를 만든 뒤, Redis를 잠깐 멈춘 사이 삭제한다.
 
 ```bash
+NEW=$(api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt" | jq -r '.data.fileId')
+api "$TOKEN" "$BASE_URL/api/files/$NEW" > /dev/null          # 캐시 채우기
+docker compose stop redis
+api "$TOKEN" -X DELETE "$BASE_URL/api/files/$NEW" | jq '.data.status'
+sleep 20; docker compose start redis
+sleep 70                                                        # 백그라운드 재시도(1·2·4·…초) 대기
+redis_cmd GET "files:metadata:$NEW" | jq '{status,version}'
+api "$TOKEN" "$BASE_URL/api/files/$NEW" | jq '.errorCode'
+docker compose logs backend --since 3m | grep -E 'Cache update succeeded in background|failed permanently'
+```
+
+판정: 캐시 값이 `DELETED`로 바뀌고 조회가 `RESOURCE_NOT_FOUND`다. 로그에 `Cache update succeeded in background`가 있다. Redis를 2분 넘게 멈추면 재시도가 끝나 `failed permanently`가 남고, 재시작 후 최대 5분(TTL) 동안 메타데이터 조회에 이전 값이 보일 수 있다. 이 경우에도 다운로드는 `404`여야 한다([DEC-003](../DECISIONS.md#결정-목록)의 한계).
+
+### V-FAIL-03 PostgreSQL 중지 중 업로드
+
+```bash
+docker compose stop postgres
+curl -s -o /dev/null -w '%{http_code} %{time_total}s\n' -H "Authorization: Bearer $TOKEN" \
+  -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt"
+docker compose logs backend --since 5m | grep -E 'File metadata save failed|Upload outcome unknown'
+docker compose start postgres
+```
+
+판정: 응답이 실패다. DB 연결 대기(Hikari 기본 30초)×재시도 때문에 nginx가 60초에 `504`를 먼저 돌려줄 수 있으며, backend는 계속 처리해 로그에 `Upload outcome unknown; object kept for reconciliation`을 남긴다. 결과 불명이므로 MinIO에 객체가 남는 것이 정상이며 V-ADMIN-02에서 정리한다.
+
+### V-FAIL-04 MinIO 중지 중 업로드·다운로드
+
+```bash
+OLD=$(api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt" | jq -r '.data.fileId')
+BEFORE=$(psql_q "select count(*) from files;")
 docker compose stop minio
-curl -i -X POST http://localhost:8080/api/files \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-  -F "file=@./sample.txt"
+api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt" | jq '.errorCode'
+curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/files/$OLD/download"
+psql_q "select count(*) from files;"; echo "before=$BEFORE"
 docker compose start minio
 ```
 
-확인 기준:
+판정: 업로드는 `FILE_UPLOAD_FAILED`(500)이고 `files` 행 수가 늘지 않는다. 기존 파일 다운로드는 현재 구현상 `404 RESOURCE_NOT_FOUND`다(저장소 장애와 객체 없음을 구분하지 않음, 결과에 한계로 기록).
 
-- 업로드 또는 다운로드가 실패한다.
-- 응답은 `FILE_UPLOAD_FAILED` 또는 서버 오류로 확인한다.
-
-## 환경 비교·실패·성능 검증
-
-이 문서는 검증 방법과 판정 기준이다. 실행 결과 보고서가 아니며, 기존 Day 13 작업의 완료 범위는 [작업일지](../worklogs/LEGACY.md#day-13---최종-검증-및-성능-점검)에 명시된 절차 문서화다. 실제 실행 결과는 당일 작업일지에 기록하고 [후속 검증 작업](../TASKS.md#후속-검증-작업)에 연결한다.
-
-Day 13 최종 검증은 온프레미스 Docker Compose 환경에서 구현한 기능 계약이 AWS ECS/서버리스 환경에서도 유지되는지 확인하고, AWS 전환으로 개선되는 운영 특성을 함께 검증한다.
-
-검증의 핵심은 두 가지다.
-
-- 사용자 관점의 API 동작은 온프레미스와 AWS에서 동일해야 한다.
-- 운영 관점에서는 AWS의 관리형 서비스, 서버리스 후처리, Auto Scaling, CloudWatch 관측성, HTTPS/IAM 보안 이점이 온프레미스 구성보다 명확해야 한다.
-
-실제 AWS 리소스 검증은 비용이 발생하므로 `docs/design/DEPLOYMENT.md` 순서대로 Terraform apply와 GitHub Actions 배포를 완료한 뒤 수행한다.
-
-### 1. 검증 범위
-
-기능 동일성:
-
-- API 응답 계약이 온프레미스와 AWS에서 동일한지 확인한다.
-- 업로드, 다운로드, 삭제의 사용자 관점 동작이 동일한지 확인한다.
-- MinIO object key와 S3 object key가 같은 `storagePath` 계약을 유지하는지 확인한다.
-- PostgreSQL과 Aurora PostgreSQL의 핵심 테이블 데이터 형태가 동일한지 확인한다.
-- Redis와 ElastiCache의 캐시 키 형식이 동일한지 확인한다.
-
-AWS 전환 효과:
-
-- Nginx 단일 진입점이 ALB health check와 target group 기반 라우팅으로 대체되는지 확인한다.
-- 수동 컨테이너 복구 중심의 온프레미스 운영이 ECS service rolling deployment와 task self-healing으로 대체되는지 확인한다.
-- MinIO 기반 object 저장소가 S3 durability, prefix 기반 IAM 제한, event notification으로 확장되는지 확인한다.
-- 파일 후처리가 애플리케이션 동기 처리나 수동 작업이 아니라 S3 event 기반 Lambda로 분리되는지 확인한다.
-- 로컬 로그 확인 중심의 장애 분석이 CloudWatch Logs와 CloudWatch Alarm 기반 관측성으로 확장되는지 확인한다.
-- HTTP/Nginx 중심 진입점이 Route53, ACM, ALB HTTPS 구성으로 보안 강화되는지 확인한다.
-
-### 2. 온프레미스와 AWS 비교 요약
-
-| 영역 | 온프레미스 기준 | AWS 기준 | 부각할 개선점 |
-| --- | --- | --- | --- |
-| 진입점 | Nginx reverse proxy | ALB, Route53, ACM | managed load balancing, HTTPS, target health |
-| 실행 환경 | Docker Compose backend container | ECS Fargate service | task self-healing, rolling deployment, Auto Scaling |
-| 파일 관리 | MinIO bucket과 backend 중심 처리 | S3, object tag, S3 event, Lambda | 저장/후처리/추적 책임 분리 |
-| DB | PostgreSQL container | Aurora PostgreSQL | managed database, subnet isolation |
-| 캐시 | Redis container | ElastiCache Redis | managed cache, TLS 연결 |
-| 보안 | 로컬 네트워크와 컨테이너 환경변수 중심 | IAM role, SG, private subnet, ACM HTTPS | 최소 권한, 네트워크 격리, 전송 구간 암호화 |
-| 비용 관리 | 서버와 컨테이너를 직접 상시 운영 | desired count, Serverless, managed metric | 사용량 기반 조정, 리소스별 비용 추적 |
-| 장애 복구 | 컨테이너 상태 확인 후 수동 재시작 | ECS scheduler, ALB health, managed service | 자동 교체, rolling deployment, 장애 위치 분리 |
-| 로그/알람 | `docker compose logs` | CloudWatch Logs/Alarms | 중앙화된 로그, 지표 기반 장애 감지 |
-| 확장 | compose scale 또는 수동 증설 | ECS Service Auto Scaling | CPU/memory 기반 자동 확장 |
-
-### 3. AWS 전환 가치 검증 매트릭스
-
-상세 실행 절차는 5장 이후에서 한 번만 다룬다. 이 장은 최종 검증에서 어떤 운영 개선을 증명해야 하는지 정리한다.
-
-| 검증 영역 | 확인 위치 | 완료 기준 |
-| --- | --- | --- |
-| 파일 관리 | API 응답, Aurora `files.storage_path`, S3 object/tag, Lambda log | DB metadata와 object key가 일치하고 후처리 결과가 S3 tag와 Lambda log에 남는다. |
-| 비용 관리 | Terraform 변수, ECS desired/min/max, Lambda invocation, log retention | 상시 실행 리소스와 이벤트 기반 실행 리소스를 구분하고 dev 환경 비용 상한을 설명할 수 있다. |
-| 보안 경계 | subnet, security group, IAM role, ALB listener, ACM | ALB는 public, ECS는 private, DB/Redis는 database subnet에 있고 S3 권한은 `files/` prefix로 제한된다. |
-| 장애 복구 | ECS event, ALB target health, CloudWatch Logs/Alarms | 실제 장애 주입 후 실패 로그를 찾고, scheduler 또는 정상 재시도 이후 health/API가 복구된다. |
-| 관측성 | backend log group, Lambda log group, CloudWatch alarm/metric | API 처리와 파일 후처리 로그가 분리되고 장애 원인을 로그와 지표로 추적할 수 있다. |
-| 확장성 | ECS Service Auto Scaling, ALB target group, Lambda metrics | API 서버, object 저장소, 후처리 실행 단위의 확장 책임을 분리해서 설명할 수 있다. |
-
-### 4. 환경별 진입점
-
-온프레미스:
+### V-FAIL-05 backend 재시작과 데이터 유지
 
 ```bash
-ONPREM_BASE_URL=http://localhost:8080
+docker compose restart backend
+until curl -sf "$BASE_URL/api/health" > /dev/null; do sleep 2; done
+api "$TOKEN" "$BASE_URL/api/files" | jq '.data | length'
+TOKEN=$(login "$USER_EMAIL"); echo "${TOKEN:0:20}..."
 ```
 
-AWS:
+판정: 재시작 전 발급한 토큰이 유효하고(JWT는 무상태), 파일 목록이 유지된다. `docker compose down` 후 `up`해도 볼륨 데이터가 유지된다(`down -v`는 초기화).
+
+## 6. 관리자 정합성 점검
+
+### V-ADMIN-01 관리자 계정 준비와 권한
+
+회원가입은 `USER`만 만들 수 있으므로 DB에서 역할을 바꾼 뒤 다시 로그인한다(토큰에 역할이 들어간다).
+
+```bash
+ADMIN_EMAIL="admin-$RUN_ID@example.com"; signup "$ADMIN_EMAIL" "관리자" > /dev/null
+psql_q "update users set role='ADMIN' where email='$ADMIN_EMAIL';"
+ADMIN_TOKEN=$(login "$ADMIN_EMAIL")
+api "$TOKEN" "$BASE_URL/api/admin/storage/orphans" | jq '.errorCode'
+api "$ADMIN_TOKEN" "$BASE_URL/api/admin/storage/orphans?minAgeMinutes=1" | jq '.errorCode'
+```
+
+판정: 일반 사용자 `AUTH_ACCESS_DENIED`(403), 처리 중 판단 기준(기본 15분)보다 짧은 `minAgeMinutes`는 `VALIDATION_ERROR`(400).
+
+### V-ADMIN-02 고아 객체 보고와 정리
+
+V-FAIL-03에서 남은 객체를 대상으로 한다. 기다리는 시간을 줄이려면 `.env`에 `APP_FILE_IDEMPOTENCY_IN_PROGRESS_TIMEOUT=PT1M`을 넣고 `docker compose up -d backend`로 다시 띄운 뒤 `minAgeMinutes=2`를 쓴다(검증 후 원래 값으로 돌린다).
+
+```bash
+MIN_AGE=${MIN_AGE:-60}
+api "$ADMIN_TOKEN" "$BASE_URL/api/admin/storage/orphans?minAgeMinutes=$MIN_AGE" | jq '.data | {orphans: [.orphanObjects[].storagePath], stale: [.staleUploadRequests[].storagePath]}'
+api "$ADMIN_TOKEN" -X POST "$BASE_URL/api/admin/storage/orphans/cleanup?minAgeMinutes=$MIN_AGE" | jq '.data'
+api "$ADMIN_TOKEN" "$BASE_URL/api/admin/storage/orphans?minAgeMinutes=$MIN_AGE" | jq '.data.orphanObjects | length'
+```
+
+판정: V-FAIL-03의 객체가 보고되고 정리 후 0개가 된다. `files` 행이 있는 객체(논리 삭제 포함)와 `minAgeMinutes`보다 최근 객체는 보고되지 않는다.
+
+## 7. 데이터 이전 검증
+
+MIG-01에서 데이터를 옮기지 않기로 해서([DEC-007](../DECISIONS.md#결정-목록)) 현재 범위에서는 실행하지 않는다. 데이터 이전을 다시 범위에 넣을 때 쓰는 공통 판정이다.
+
+### V-MIG-01 이전 전 기준값 (온프레미스)
+
+```bash
+psql_q "select count(*) from users;"  > mig-before.txt
+psql_q "select status, count(*) from files group by status order by 1;" >> mig-before.txt
+psql_q "select id, storage_path, size from files order by id;" > mig-files-before.txt
+mc_cmd "mc ls --recursive local/${MINIO_BUCKET:-files}" | wc -l >> mig-before.txt
+```
+
+샘플 파일 3개 이상을 다운로드해 해시를 저장한다(V-FUNC-02의 다운로드 명령).
+
+### V-MIG-02 이전 후 비교 (AWS)
+
+- `users` 수, 상태별 `files` 수가 이전 전과 같다.
+- 모든 `files.storage_path`가 `files/`로 시작하고 각 키에 대해 `aws s3api head-object`가 성공한다. 크기가 `files.size`와 같다.
+- 이전한 사용자로 기존 비밀번호 로그인이 된다(비밀번호 해시 보존).
+- 샘플 파일을 AWS API로 다운로드한 해시가 이전 전 해시와 같다.
+- 논리 삭제된 파일은 AWS에서도 조회되지 않는다.
+- 이전 후 새 업로드의 `fileId`가 기존 최대값보다 크다(시퀀스 보존).
+- 복사한 객체에도 Lambda 태그(`scan-status` 등)가 기록된다.
+
+## 7A. AWS 배포 전 로컬 검증
+
+AWS에 apply하기 전에, 온프레미스 시나리오(V-ONP~V-ADMIN)로는 확인되지 않는 AWS 전용 경로를 로컬에서 먼저 확인한다. 비용이 없고 실제 AWS를 호출하지 않는다. 온프레미스 기준선(ONP-01~03)이 이미 통과한 상태를 전제로 한다.
+
+| ID | 확인 대상 | AWS에서 달라지는 점 |
+| --- | --- | --- |
+| V-LOC-01 | 자동 테스트·Terraform 정적 검사 | 리전 기본값 변경, 계층 분리, Owner 태그 |
+| V-LOC-02 | `s3` 프로필 기능 | ECS는 MinIO 대신 AWS SDK S3 경로(`S3FileStorage`), 키 접두사 `files/` |
+| V-LOC-03 | 컨테이너 실행 조건 | Fargate 0.5 vCPU·1GiB, 비root, ALB health check `/api/health` |
+| V-LOC-04 | DB 재개 지연 | Aurora가 0 ACU로 일시정지돼 있으면 첫 연결이 재개될 때까지 기다린다 |
+| V-LOC-05 | Lambda 후처리 | S3 이벤트로 객체 태그 기록 |
+| V-LOC-06 | CD task definition 태그 유지 | 새 revision이 Owner 태그를 잃으면 정리 정책에 삭제될 수 있다 |
+
+로컬에서 재현하지 않는 것: ElastiCache TLS 연결(`REDIS_SSL_ENABLED=true`), IAM task role 권한, Aurora 엔진 자체의 재개 시간, ALB·NAT 네트워크. 이것들은 [8. AWS 검증](#8-aws-검증)에서 본다.
+
+공통 준비([0. 공통 준비](#0-공통-준비))에 더해 다음을 쓴다. `docker-compose.aws-local.yml`이 backend를 ECS와 같은 프로필·자원 한도로 바꾸고 S3 요청을 MinIO로 보낸다. 컨테이너에는 사용자 `~/.aws` 자격 증명이 들어가지 않는다.
+
+```bash
+DC="docker compose -f docker-compose.yml -f docker-compose.aws-local.yml"
+AWS_LOCAL_BUCKET=${AWS_LOCAL_BUCKET:-fileshare-local}
+```
+
+### V-LOC-01 자동 테스트와 Terraform 정적 검사
+
+WSL에 Java가 없으면 Temurin 17을 받아 `JAVA_HOME`과 `PATH`에 지정한 뒤 실행한다. Docker는 필요 없다.
+
+```bash
+(cd backend && ./gradlew test --no-daemon)
+terraform fmt -check -recursive terraform
+for env in dev-data dev; do
+  terraform -chdir=terraform/environments/$env init -backend=false -input=false > /dev/null
+  terraform -chdir=terraform/environments/$env validate
+done
+terraform -chdir=terraform/environments/dev-data plan -input=false | grep -E '^Plan:'
+```
+
+판정:
+
+- 테스트 실패·오류가 0이다.
+- fmt 차이가 없고 두 계층 모두 `Success! The configuration is valid.`가 나온다.
+- 유지 계층을 apply하기 전에는 `Plan: 27 to add, 0 to change, 0 to destroy.`가 나온다. 실습 계층(`dev`) plan은 유지 계층 리소스를 조회하므로 apply 뒤에만 실행한다.
+- plan은 AWS 조회만 하고 리소스를 만들지 않는다.
+
+### V-LOC-02 `s3` 프로필 기능
+
+```bash
+mc_cmd "mc mb --ignore-existing local/$AWS_LOCAL_BUCKET"
+$DC up -d --build minio backend
+$DC exec -T backend env | grep -E '^(SPRING_PROFILES_ACTIVE|AWS_ENDPOINT_URL_S3|S3_BUCKET)='
+curl -s "$BASE_URL/api/health" | jq
+```
+
+그다음 같은 셸에서 [V-FUNC-01](#v-func-01-회원가입로그인사용자-조회)~[V-FUNC-04](#v-func-04-삭제)와 [V-IDEM-01](#v-idem-01-같은-키-재전송)을 그대로 실행한다. 객체 확인은 V-DATA-01 대신 아래 명령을 쓴다.
+
+```bash
+STORAGE_PATH=$(psql_q "select storage_path from files where id=$FILE_ID;")
+echo "$STORAGE_PATH"
+mc_cmd "mc stat local/$AWS_LOCAL_BUCKET/$STORAGE_PATH"
+mc_cmd "mc cat local/$AWS_LOCAL_BUCKET/$STORAGE_PATH" | sha256sum
+$DC logs backend --since 10m | grep -iE 'SdkClientException|Unable to load credentials|UnknownHost' || echo "SDK 오류 없음"
+```
+
+판정:
+
+- backend 환경변수에 `postgres,redis,s3`가 있고, health가 `UP`이다.
+- V-FUNC·V-IDEM-01 판정이 온프레미스와 같다.
+- `storage_path`가 `files/<uuid>.<확장자>`이다. 같은 키의 객체가 `$AWS_LOCAL_BUCKET`에 있고 해시가 원본과 같다.
+- backend 로그에 SDK 자격 증명·호스트 해석 오류가 없다.
+
+실패할 때 먼저 볼 것:
+
+- `UnknownHostException: <bucket>.minio`이면 bucket 이름과 MinIO alias가 다른 것이다. `AWS_LOCAL_BUCKET`을 compose와 셸에서 같은 값으로 쓴다.
+- `NoSuchBucket`이면 `mc mb`를 빠뜨린 것이다. `s3` 프로필은 bucket을 만들지 않는다. AWS에서는 유지 계층 Terraform이 만든다.
+
+### V-LOC-03 컨테이너 실행 조건
+
+V-LOC-02 스택에서 실행한다.
+
+```bash
+$DC exec -T backend id -u
+docker inspect -f 'cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' "$($DC ps -q backend)"
+docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' "$($DC ps -q backend)"
+$DC exec -T backend bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080; printf "GET /api/health HTTP/1.0\r\n\r\n" >&3; head -1 <&3'
+```
+
+판정:
+
+- uid가 `10001`이다(비root).
+- `cpus=500000000 mem=1073741824`이고, `oom=false`, `restarts=0`이다.
+- V-LOC-02를 마친 뒤 메모리 사용량이 1GiB 한도 안이다. 수치를 기록해 둔다.
+- nginx를 거치지 않고 컨테이너 8080 포트에서 `/api/health`가 `200`이다. ALB target group은 이 경로를 직접 호출한다.
+
+### V-LOC-04 DB 재개 지연
+
+Aurora는 0 ACU로 멈춰 있다가 첫 연결이 오면 재개한다. 그동안 연결은 응답 없이 기다린다. PostgreSQL 컨테이너를 `pause`해 같은 상황을 만든다. 일시정지 길이 20초는 재개 시간 추정값(약 15초)보다 조금 길게 잡은 값이다.
+
+**4-1. 실행 중 요청**
+
+```bash
+EMAIL4="loc4-$RUN_ID@example.com"; signup "$EMAIL4" loc4 > /dev/null
+docker compose pause postgres
+( sleep 20; docker compose unpause postgres ) &
+time (login "$EMAIL4" | cut -c1-20)
+wait
+```
+
+**4-2. 기동 중 DB가 멈춰 있을 때**
+
+backend 컨테이너는 ID로 직접 시작한다. `$DC start backend`는 의존 서비스 postgres까지 시작하려다 paused 상태라 거부된다. JVM 기동에 16~20초가 걸리므로 pause는 40초로 잡는다. 20초면 DB 연결 시도 전에 풀려 이 상황을 재현하지 못한다(2026-11-19 확인).
+
+```bash
+BID=$($DC ps -aq backend)
+docker stop "$BID" > /dev/null
+docker compose pause postgres
+echo "start   $(date -u +%T)"; docker start "$BID" > /dev/null
+sleep 40; docker compose unpause postgres; echo "unpause $(date -u +%T)"
+for i in $(seq 1 30); do curl -sf "$BASE_URL/actuator/health" > /dev/null && { echo "UP after ${i}x5s"; break; }; sleep 5; done
+docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} restarts={{.RestartCount}}' "$BID"
+docker logs --since 3m "$BID" 2>&1 | grep -E 'HikariPool-1 - Starting|connection attempt failed|Application run failed|Started File' | cut -c1-140
+$DC up -d backend      # 종료됐으면 다시 띄운다
+```
+
+판정:
+
+- 4-1: 로그인이 실패하지 않고 토큰을 받는다. 걸린 시간이 약 20초이고 30초(Hikari 기본 `connectionTimeout`) 안이다.
+- 4-2: 먼저 `HikariPool-1 - Starting` 시각이 unpause보다 앞인지 본다. 뒤라면 재현되지 않은 것이므로 pause를 늘려 다시 한다. 현재 코드에서는 연결 시도가 약 6초씩 두 번 실패한 뒤 `Application run failed`로 종료(exit 1)되는 것이 기대 결과다(2026-11-19 확인). 기동 시 DB 재시도는 넣지 않았고, AWS에서는 배포 전에 DB를 깨워 이 상황을 피한다([DEC-010](../DECISIONS.md#결정-목록), [배포 전 DB 깨우기](DEPLOYMENT.md#46-github-actions-배포-실행)). 결과가 바뀌면(예: running으로 `UP`) 그 결과와 원인을 기록한다.
+
+### V-LOC-05 Lambda 후처리
+
+Lambda 핸들러를 로컬 Python에서 실행한다. S3 대신 MinIO(path 방식)를 쓴다. 임시 설정 파일을 쓰므로 사용자 `~/.aws`와 실제 AWS 계정은 사용하지 않는다.
+
+```bash
+LT=$(mktemp -d)
+printf '[default]\ns3 =\n    addressing_style = path\n' > "$LT/config"
+mc_cmd "echo clean | mc pipe local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.txt && echo x | mc pipe local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.sh"
+jq -n --arg b "$AWS_LOCAL_BUCKET" --arg r "$RUN_ID" '{Records: [
+  {eventName:"ObjectCreated:Put", s3:{bucket:{name:$b}, object:{key:("files/loc5-"+$r+".txt")}}},
+  {eventName:"ObjectCreated:Put", s3:{bucket:{name:$b}, object:{key:("files/loc5-"+$r+".sh")}}},
+  {eventName:"ObjectRemoved:Delete", s3:{bucket:{name:$b}, object:{key:"files/ignored.txt"}}}]}' > "$LT/event.json"
+
+env -u AWS_PROFILE AWS_CONFIG_FILE="$LT/config" AWS_SHARED_CREDENTIALS_FILE=/dev/null \
+  AWS_ACCESS_KEY_ID="${MINIO_ROOT_USER:-minioadmin}" AWS_SECRET_ACCESS_KEY="${MINIO_ROOT_PASSWORD:-minioadmin}" \
+  AWS_DEFAULT_REGION=us-east-1 AWS_ENDPOINT_URL_S3="http://localhost:${MINIO_API_PORT:-9000}" AWS_EC2_METADATA_DISABLED=true \
+  uv run --no-project --with boto3 python -c '
+import json, sys
+sys.path.insert(0, "terraform/functions/file-processor")
+import handler
+print(json.dumps(handler.lambda_handler(json.load(open(sys.argv[1])), None), indent=2))' "$LT/event.json"
+
+mc_cmd "mc tag list local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.txt; mc tag list local/$AWS_LOCAL_BUCKET/files/loc5-$RUN_ID.sh"
+rm -rf "$LT"
+```
+
+판정:
+
+- `processed`에 2건이 있고 `ObjectRemoved` 이벤트는 건너뛴다.
+- `.txt`: `scan-status=CLEAN`, `processing-status=COMPLETED`, `metadata-size=6`.
+- `.sh`: `scan-status=FAILED`, `processing-status=QUARANTINED`.
+- 다섯 태그(`scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`)가 모두 있다.
+
+### V-LOC-06 CD task definition 태그 유지
+
+[CI/CD workflow](../../.github/workflows/backend-ci-cd.yml)의 "Read current ECS task definition" 단계와 같은 jq를 예시 JSON에 적용한다.
+
+```bash
+CT=$(mktemp -d)
+cat > "$CT/describe.json" <<'JSON'
+{"taskDefinition":{"family":"fileshare-dev-backend","containerDefinitions":[{"name":"backend","image":"old"}]},
+ "tags":[{"key":"Owner","value":"example-owner"},{"key":"Project","value":"fileshare"}]}
+JSON
+owner_check() { jq -e '.tags | any(.key == "Owner" and (.value | length > 0))' "$1" > /dev/null && echo pass || echo refuse; }
+
+jq '.taskDefinition + {tags: (.tags // [])}' "$CT/describe.json" > "$CT/with.json"
+jq -c '{family, tags}' "$CT/with.json"; owner_check "$CT/with.json"
+
+jq 'del(.tags)' "$CT/describe.json" | jq '.taskDefinition + {tags: (.tags // [])}' > "$CT/none.json"
+owner_check "$CT/none.json"
+
+jq '.tags = [{"key":"Owner","value":""}]' "$CT/describe.json" | jq '.taskDefinition + {tags: (.tags // [])}' > "$CT/empty.json"
+owner_check "$CT/empty.json"
+rm -rf "$CT"
+```
+
+판정: 태그가 있는 경우 `family`와 태그 2개가 유지되고 `pass`가 나온다. 태그가 없거나 Owner 값이 빈 경우는 `refuse`가 나온다(workflow는 여기서 실패한다). 렌더·배포 action이 `tags`를 그대로 등록하는지는 첫 CD 실행에서 확인한다.
+
+### V-LOC 정리
+
+```bash
+docker compose up -d --build minio backend      # override 없이 다시 만들어 minio 프로필로 되돌린다
+docker compose exec -T backend env | grep '^SPRING_PROFILES_ACTIVE='
+```
+
+판정: `postgres,redis,minio`로 돌아온다. `$AWS_LOCAL_BUCKET` bucket과 V-LOC 계정·파일은 로컬 데이터라 남겨도 된다. 지우려면 `mc_cmd "mc rb --force local/$AWS_LOCAL_BUCKET"`를 실행한다.
+
+## 8. AWS 검증
+
+[AWS 배포](DEPLOYMENT.md#4-aws-배포) 이후 실행한다. 비용이 발생하므로 PORT-01의 예산·정리 조건 안에서만 수행한다.
 
 ```bash
 cd terraform/environments/dev
-AWS_BASE_URL=$(terraform output -raw application_url)
-AWS_REGION=${AWS_REGION:-ap-northeast-2}
+BASE_URL=$(terraform output -raw application_url)
+AWS_REGION=${AWS_REGION:-us-east-1}
 FILE_BUCKET=$(terraform output -raw file_bucket_name)
 FILE_PROCESSOR_FUNCTION=$(terraform output -raw file_processor_function_name)
 FILE_PROCESSOR_LOG_GROUP=$(terraform output -raw file_processor_log_group_name)
-```
-
-도메인/HTTPS를 설정하지 않은 dev 환경에서는 `application_url`이 ALB HTTP URL을 반환한다. HTTPS가 설정된 환경에서는 같은 API 경로를 HTTPS 기준으로 호출한다.
-
-### 5. 공통 API 비교
-
-두 환경에서 같은 순서로 실행한다.
-
-```bash
-BASE_URL="$ONPREM_BASE_URL"
-```
-
-또는:
-
-```bash
-BASE_URL="$AWS_BASE_URL"
-```
-
-Health:
-
-```bash
-curl -s "$BASE_URL/api/health"
-curl -s "$BASE_URL/actuator/health"
-```
-
-인증:
-
-```bash
-curl -s -X POST "$BASE_URL/api/auth/signup" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "day13-user@example.com",
-    "password": "Password123!",
-    "name": "Day13 User"
-  }'
-
-TOKEN=$(curl -s -X POST "$BASE_URL/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "day13-user@example.com",
-    "password": "Password123!"
-  }' | jq -r '.data.accessToken')
-
-curl -s "$BASE_URL/api/users/me" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-정상 기준:
-
-- `success`가 `true`다.
-- 로그인 응답에 `data.accessToken`이 있다.
-- 현재 사용자 조회의 email, name, role 형식이 두 환경에서 동일하다.
-
-### 6. 업로드/다운로드 시나리오
-
-테스트 파일:
-
-```bash
-printf "day13 file validation\n" > day13-sample.txt
-```
-
-업로드:
-
-```bash
-UPLOAD_RESPONSE=$(curl -s -X POST "$BASE_URL/api/files" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@./day13-sample.txt" \
-  -F "description=day13 validation")
-
-echo "$UPLOAD_RESPONSE"
-FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.fileId')
-```
-
-목록/단건 조회:
-
-```bash
-curl -s "$BASE_URL/api/files" \
-  -H "Authorization: Bearer $TOKEN"
-
-curl -s "$BASE_URL/api/files/$FILE_ID" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-다운로드:
-
-```bash
-curl -s -L "$BASE_URL/api/files/$FILE_ID/download" \
-  -H "Authorization: Bearer $TOKEN" \
-  -o day13-downloaded.txt
-
-diff -u day13-sample.txt day13-downloaded.txt
-```
-
-삭제:
-
-```bash
-curl -s -X DELETE "$BASE_URL/api/files/$FILE_ID" \
-  -H "Authorization: Bearer $TOKEN"
-
-curl -s "$BASE_URL/api/files/$FILE_ID" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-정상 기준:
-
-- 업로드 응답의 `originalFileName`은 `day13-sample.txt`다.
-- 다운로드 파일은 원본과 `diff` 차이가 없다.
-- 삭제 후 단건 조회는 `RESOURCE_NOT_FOUND` 계열 응답을 반환한다.
-
-### 7. 저장소와 서버리스 후처리 비교
-
-온프레미스:
-
-- PostgreSQL `files.storage_path` 값과 MinIO object key가 일치한다.
-- Redis 키는 `files:metadata:{fileId}` 형식이다.
-- MinIO bucket은 `files`이며 object는 기존 storage path 아래 생성된다.
-- 파일 후처리는 백엔드 구현 또는 수동 검증 범위에 머문다.
-
-AWS:
-
-- Aurora PostgreSQL의 `files.storage_path` 값과 S3 object key가 일치한다.
-- S3 object key는 기본적으로 `files/` prefix 아래 생성된다.
-- ElastiCache Redis 키는 `files:metadata:{fileId}` 형식이다.
-- S3 object tag에 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`가 기록된다.
-- S3 `ObjectCreated` 이벤트가 Lambda를 호출하므로 파일 후처리 책임이 backend API 응답 경로에서 분리된다.
-- Lambda 실패는 backend API 로그가 아니라 Lambda CloudWatch log와 alarm에서 독립적으로 추적한다.
-
-AWS 확인 절차:
-
-1. 업로드 응답에서 file ID를 변수로 잡는다.
-
-```bash
-echo "$UPLOAD_RESPONSE" | jq
-FILE_ID=$(echo "$UPLOAD_RESPONSE" | jq -r '.data.fileId')
-```
-
-2. Aurora PostgreSQL에서 `storage_path`를 확인한다.
-
-```sql
-select id, original_file_name, storage_path, status, scan_status
-from files
-where id = '<FILE_ID>';
-```
-
-DB는 database subnet에 있으므로 로컬 PC에서 바로 접속하지 않는다. Session Manager bastion, ECS exec, 별도 운영 접속 경로처럼 private subnet 접근 경로가 있을 때만 직접 조회한다. 직접 접속 경로가 없으면 API 단건 조회와 S3 object key 확인으로 먼저 검증한다.
-
-3. S3에서 `files/` prefix 아래 object가 생성됐는지 확인한다.
-
-```bash
-aws s3api list-objects-v2 \
-  --region "$AWS_REGION" \
-  --bucket "$FILE_BUCKET" \
-  --prefix "files/" \
-  --query "Contents[].Key" \
-  --output text
-```
-
-콘솔에서는 S3 > Buckets > `<file_bucket_name>` > Objects > `files/` 경로를 연다. 업로드한 파일의 object key가 `files/`로 시작해야 한다.
-
-4. Aurora의 `files.storage_path`와 S3 object key가 같은지 확인한다.
-
-```bash
-STORAGE_PATH="<Aurora files.storage_path 값>"
-
-aws s3api head-object \
-  --region "$AWS_REGION" \
-  --bucket "$FILE_BUCKET" \
-  --key "$STORAGE_PATH"
-```
-
-`head-object`가 성공하면 DB metadata가 가리키는 object가 실제 S3 bucket에 존재한다. `NoSuchKey`가 나오면 DB의 `storage_path`, 애플리케이션 `S3_OBJECT_PREFIX`, Lambda notification prefix를 함께 확인한다.
-
-5. S3 object tag에 Lambda 후처리 결과가 기록됐는지 확인한다.
-
-```bash
-aws s3api get-object-tagging \
-  --region "$AWS_REGION" \
-  --bucket "$FILE_BUCKET" \
-  --key "$STORAGE_PATH"
-```
-
-콘솔에서는 S3 > Buckets > `<file_bucket_name>` > Objects > `<object key>` > Properties > Tags에서 확인한다. 정상 기준은 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor` tag가 존재하는 것이다.
-
-6. Lambda가 S3 ObjectCreated 이벤트로 실행됐는지 확인한다.
-
-```bash
-aws logs describe-log-streams \
-  --region "$AWS_REGION" \
-  --log-group-name "$FILE_PROCESSOR_LOG_GROUP" \
-  --order-by LastEventTime \
-  --descending \
-  --max-items 5
-```
-
-콘솔에서는 CloudWatch > Log groups > `/aws/lambda/fileshare-dev-file-processor`에서 업로드 시간대의 log stream을 확인한다. Lambda > Functions > `<file_processor_function_name>` > Monitor에서도 Invocations가 증가해야 한다.
-
-7. backend 로그와 Lambda 로그가 분리되는지 확인한다.
-
-```bash
-aws logs describe-log-streams \
-  --region "$AWS_REGION" \
-  --log-group-name "/ecs/fileshare-dev-backend" \
-  --order-by LastEventTime \
-  --descending \
-  --max-items 5
-```
-
-업로드 API 요청 로그는 `/ecs/fileshare-dev-backend`, S3 object 후처리 로그는 `/aws/lambda/fileshare-dev-file-processor`에서 따로 확인한다.
-
-AWS 개선 확인 기준:
-
-- 파일 업로드 후 backend task를 직접 확장하지 않아도 Lambda가 별도 실행 단위로 후처리를 수행한다.
-- S3 object tag만 확인해도 후처리 결과를 추적할 수 있다.
-- S3 object 접근 권한은 bucket 전체가 아니라 `files/` prefix 기준으로 제한된다.
-
-### 8. 장애 복구 시나리오
-
-온프레미스 장애 점검은 `docs/design/VALIDATION.md`의 장애 시나리오 수동 점검을 따른다.
-
-AWS 장애 점검은 실제 실패를 한 번 만든 뒤 로그를 확인하고 정상 동작으로 복구되는지까지 본다. 운영 공유 환경에서는 사전에 영향 시간을 공지하고, dev 환경에서만 수행한다.
-
-#### 8.1 ECS task 중지 실패 주입
-
-```bash
 ECS_CLUSTER=$(terraform output -raw ecs_cluster_name)
 ECS_SERVICE=$(terraform output -raw ecs_service_name)
-
-RUNNING_TASK_ARN=$(aws ecs list-tasks \
-  --region "$AWS_REGION" \
-  --cluster "$ECS_CLUSTER" \
-  --service-name "$ECS_SERVICE" \
-  --desired-status RUNNING \
-  --query "taskArns[0]" \
-  --output text)
-
-aws ecs stop-task \
-  --region "$AWS_REGION" \
-  --cluster "$ECS_CLUSTER" \
-  --task "$RUNNING_TASK_ARN" \
-  --reason "docs-14 failure recovery test"
+cd -
 ```
 
-실패 확인:
+### V-AWS-01 진입점과 대상 상태
 
 ```bash
-aws ecs describe-tasks \
-  --region "$AWS_REGION" \
-  --cluster "$ECS_CLUSTER" \
-  --tasks "$RUNNING_TASK_ARN" \
-  --query "tasks[0].{lastStatus:lastStatus,stopCode:stopCode,stoppedReason:stoppedReason,containers:containers[].reason}"
+curl -s "$BASE_URL/api/health" | jq
+aws ecs describe-services --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+  --query "services[0].{desired:desiredCount,running:runningCount,taskDefinition:taskDefinition}"
 ```
 
-- ECS > Clusters > `fileshare-dev-ecs` > Services > Events에서 `docs-14 failure recovery test` reason과 새 task 기동 이벤트를 확인한다.
-- ECS > Clusters > `fileshare-dev-ecs` > Tasks > Stopped에서 stopped reason과 container exit reason을 확인한다.
-- CloudWatch > Log groups > `/ecs/fileshare-dev-backend`에서 중지된 task 시간대의 application log stream을 확인한다.
+판정: health `UP`, running = desired, ALB target group의 target이 `healthy`(콘솔 EC2 > Target Groups). 도메인 변수를 설정했다면 HTTP 요청이 HTTPS로 301 redirect된다.
 
-복구 확인:
+### V-AWS-02 기능·계약 비교
+
+2~4장의 V-FUNC, V-IDEM을 같은 `BASE_URL`로 실행한다. DB·Redis 직접 조회(`psql_q`, `redis_cmd`)는 AWS에서 쓸 수 없으므로 V-DATA는 다음으로 대신한다. Aurora 직접 조회는 MIG-01에서 정한 접근 경로가 있을 때만 수행한다.
 
 ```bash
-aws ecs wait services-stable \
-  --region "$AWS_REGION" \
-  --cluster "$ECS_CLUSTER" \
-  --services "$ECS_SERVICE"
-
-aws ecs describe-services \
-  --region "$AWS_REGION" \
-  --cluster "$ECS_CLUSTER" \
-  --services "$ECS_SERVICE" \
-  --query "services[0].{desired:desiredCount,running:runningCount,pending:pendingCount,deployments:deployments[].rolloutState}"
-
-curl -s -o /dev/null -w "%{http_code}\n" "$AWS_BASE_URL/api/health"
+STORED=$(api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq -r '.data.storedFileName')
+aws s3api head-object --region "$AWS_REGION" --bucket "$FILE_BUCKET" --key "$STORED" --query '{size:ContentLength,type:ContentType}'
 ```
 
-정상 기준:
+판정: 응답 형식·오류 코드가 ONP-02 기준선과 같다. S3 키는 `files/<uuid>.<확장자>`이며 `storedFileName`과 같다(S3 adapter는 두 값을 같게 저장한다). 차이는 작업일지에 그대로 기록한다.
 
-- `runningCount`가 `desiredCount`로 돌아온다.
-- ALB target group의 target이 다시 `healthy`가 된다.
-- health API가 `200`을 반환한다.
-- 장애 원인은 ECS stopped task, service event, backend log stream 중 최소 한 곳에서 추적 가능하다.
-
-#### 8.2 Lambda 실패 주입과 정상 재처리
-
-S3 이벤트 형식은 유지하되 `s3` 필드를 누락한 payload로 Lambda를 직접 호출한다. 실제 S3 object나 backend API 데이터는 변경하지 않는다.
+### V-AWS-03 S3 이벤트 후처리
 
 ```bash
-cat > /tmp/docs14-lambda-fail.json <<'JSON'
-{
-  "Records": [
-    {
-      "eventName": "ObjectCreated:Put"
-    }
-  ]
-}
-JSON
-
-aws lambda invoke \
-  --region "$AWS_REGION" \
-  --function-name "$FILE_PROCESSOR_FUNCTION" \
-  --payload fileb:///tmp/docs14-lambda-fail.json \
-  /tmp/docs14-lambda-fail-response.json
-
-cat /tmp/docs14-lambda-fail-response.json
+aws s3api get-object-tagging --region "$AWS_REGION" --bucket "$FILE_BUCKET" --key "$STORED"
+aws logs filter-log-events --region "$AWS_REGION" --log-group-name "$FILE_PROCESSOR_LOG_GROUP" \
+  --filter-pattern processed_objects --max-items 5
 ```
 
-실패 확인:
+판정: 업로드 5~30초 안에 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor` 태그가 생기고 Lambda 로그에 `processed_objects`가 남는다. 업로드 API 로그(`/ecs/fileshare-dev-backend`)와 후처리 로그가 분리된다. 현재 Lambda는 DB `status`·`scan_status`를 바꾸지 않는다(FILE-03).
 
-- `aws lambda invoke` 응답에 `FunctionError`가 포함된다.
-- CloudWatch > Log groups > `/aws/lambda/fileshare-dev-file-processor`에서 같은 시간대의 error stack trace를 확인한다.
-- CloudWatch > Alarms > `fileshare-dev-file-processor-errors`는 평가 주기 이후 `ALARM` 또는 `INSUFFICIENT_DATA`에서 `ALARM` 전환 이력을 가질 수 있다.
-
-CLI로 로그를 확인한다.
+### V-AWS-04 ECS task 중지와 자동 복구
 
 ```bash
-aws logs filter-log-events \
-  --region "$AWS_REGION" \
-  --log-group-name "$FILE_PROCESSOR_LOG_GROUP" \
-  --filter-pattern "ERROR"
+TASK=$(aws ecs list-tasks --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \
+  --desired-status RUNNING --query 'taskArns[0]' --output text)
+aws ecs stop-task --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --task "$TASK" --reason "V-AWS-04 recovery test"
+aws ecs wait services-stable --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+curl -s -o /dev/null -w '%{http_code}\n' "$BASE_URL/api/health"
 ```
 
-복구 확인은 정상 파일 업로드를 다시 수행해 Lambda가 성공 처리하는지 본다.
+판정: running이 desired로 돌아오고 target이 다시 `healthy`, health `200`. 중지 원인이 ECS service event·stopped task·backend 로그 중 한 곳에서 보인다. 1 task 구성에서는 복구 동안 요청이 실패할 수 있으며 실패 시간을 기록한다.
+
+### V-AWS-05 Lambda 실패 주입과 정상 재처리
 
 ```bash
-UPLOAD_RESPONSE=$(curl -s -X POST "$AWS_BASE_URL/api/files" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@./day13-sample.txt" \
-  -F "description=docs-14 recovery validation")
-
-echo "$UPLOAD_RESPONSE" | jq
+printf '{"Records":[{"eventName":"ObjectCreated:Put"}]}' > lambda-fail.json
+aws lambda invoke --region "$AWS_REGION" --function-name "$FILE_PROCESSOR_FUNCTION" \
+  --payload fileb://lambda-fail.json lambda-fail-out.json | jq '.FunctionError'
+aws logs filter-log-events --region "$AWS_REGION" --log-group-name "$FILE_PROCESSOR_LOG_GROUP" --filter-pattern ERROR --max-items 3
 ```
 
-업로드 후 5~30초 안에 다음을 확인한다.
+판정: `FunctionError`가 있고 로그에 오류가 남는다. 이후 정상 업로드(V-FUNC-02)의 태그가 다시 기록되고 API는 영향을 받지 않는다. S3 객체·DB는 바뀌지 않는다.
 
-- Lambda log stream에 `processed_objects` 로그가 남는다.
-- S3 object tag에 `scan-status`, `processing-status`, `metadata-size`, `metadata-content-type`, `processor`가 기록된다.
-- backend health API와 업로드 API는 Lambda 실패 주입 이후에도 정상 동작한다.
-
-#### 8.3 설정 오류 분석 체크리스트
-
-실패 주입 없이 운영 중 오류가 발생했다면 다음 순서로 원인을 좁힌다.
-
-- 배포 이미지 오류는 ECS stopped task reason, container exit reason, `/ecs/fileshare-dev-backend` log stream, 이전 task definition revision rollback 가능 여부를 확인한다.
-- S3 권한 오류는 backend log의 `AccessDenied`, IAM task role의 `arn:aws:s3:::<bucket>/files/*` 권한, 실제 object key prefix를 함께 확인한다.
-- Lambda 후처리 오류는 Lambda error log, `fileshare-dev-file-processor-errors` alarm, S3 event notification prefix, Lambda execution role의 S3 prefix 권한을 함께 확인한다.
-
-### 9. 로그 및 알람 확인
-
-로그 그룹 확인은 7장의 정상 업로드 검증과 8장의 실패 주입 검증에서 수행한다. 이 장에서는 알람 구성이 존재하고 실패 주입 이후 상태 전환을 추적할 수 있는지만 확인한다.
-
-```text
-fileshare-dev-file-processor-errors
-fileshare-dev-file-processor-duration
-fileshare-dev-backend-cpu-high
-fileshare-dev-backend-memory-high
-fileshare-dev-alb-target-5xx
-```
-
-CLI 확인:
+### V-AWS-06 알람
 
 ```bash
-aws cloudwatch describe-alarms \
-  --region "$AWS_REGION" \
-  --alarm-names \
-    fileshare-dev-file-processor-errors \
-    fileshare-dev-file-processor-duration \
-    fileshare-dev-backend-cpu-high \
-    fileshare-dev-backend-memory-high \
-    fileshare-dev-alb-target-5xx \
-  --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Reason:StateReason}"
+aws cloudwatch describe-alarms --region "$AWS_REGION" --alarm-name-prefix fileshare-dev \
+  --query "MetricAlarms[].{name:AlarmName,state:StateValue}"
 ```
 
-정상 기준:
+판정: `file-processor-errors`, `file-processor-duration`, `backend-cpu-high`, `backend-memory-high`, `alb-target-5xx` 알람이 있다. V-AWS-05 후 `file-processor-errors`가 평가 주기 안에 `ALARM`으로 바뀌거나 이력에 남는다. 알림 전달은 OBS-02 범위다.
 
-- 정상 상태에서 alarm은 `OK` 또는 `INSUFFICIENT_DATA`일 수 있다.
-- 8장의 실패 주입 후 관련 alarm이 평가 주기와 임계치에 따라 `ALARM`으로 전환되거나 alarm history에 실패 지표가 남는다.
-- 온프레미스의 `docker compose logs`보다 AWS 환경에서는 backend, Lambda, ALB, ECS 지표가 CloudWatch에 모여 장애 원인을 분리해 볼 수 있다.
+## 9. 성능 smoke
 
-### 10. 성능 및 확장성 점검
-
-개발 환경에서는 비용과 용량을 고려해 짧은 smoke 성능 점검만 수행한다.
-
-예시:
+### V-PERF-01 반복 호출
 
 ```bash
-for i in $(seq 1 20); do
-  curl -s -o /dev/null -w "%{http_code} %{time_total}\n" "$BASE_URL/api/health"
-done
+for i in $(seq 1 50); do curl -s -o /dev/null -w '%{http_code} %{time_total}\n' "$BASE_URL/api/health"; done | sort | uniq -c | head
+for i in $(seq 1 20); do api "$TOKEN" -o /dev/null -w '%{http_code} %{time_total}\n' "$BASE_URL/api/files"; done
 ```
 
-확인 기준:
+판정: 모두 `200`. 이상값은 온프레미스는 `docker compose logs`, AWS는 ALB target response time·backend 로그로 원인을 찾는다. 이 결과는 smoke이며 PERF-01의 부하 실험을 대신하지 않는다.
 
-- 모든 응답 코드가 `200`이다.
-- 응답 시간이 일시적으로 튀는 요청은 CloudWatch ALB target response time과 backend log로 원인을 확인한다.
-- ECS CPU/memory 지표와 Auto Scaling target tracking policy가 연결되어 있는지 확인한다.
-- Lambda duration/error 지표가 backend API 지표와 분리되어 있는지 확인한다.
-- 온프레미스에서는 scale out이 컨테이너 수와 Nginx upstream 조정에 의존하지만, AWS에서는 ECS desired count와 Auto Scaling policy로 조정 가능해야 한다.
-- 실제 부하 테스트는 별도 테스트 계정, 비용 예산, 알람 action을 준비한 뒤 수행한다.
+### V-PERF-02 업로드 자원 사용
 
-### 11. 완료 판정
+```bash
+head -c 9000000 /dev/urandom > "load-$RUN_ID.txt"
+docker stats --no-stream backend &   # 온프레미스: 업로드 전후로 반복 실행
+for i in $(seq 1 10); do api "$TOKEN" -o /dev/null -w '%{http_code}\n' -X POST "$BASE_URL/api/files" -F "file=@load-$RUN_ID.txt" & done; wait
+docker stats --no-stream backend
+```
 
-Day 13 완료 기준:
+판정: 모두 `200`, 메모리 사용 변화를 기록한다. S3 업로드의 전체 버퍼링 제거 효과(FILE-04)는 AWS에서 같은 조건으로 ECS 메모리 지표를 보고, 비교 기준이 필요하면 legacy 커밋 이미지와 비교한다.
 
-- 온프레미스와 AWS의 핵심 API 응답 계약이 동일하다.
-- 업로드/다운로드/삭제 시나리오가 두 환경에서 성공한다.
-- 저장소 object key와 DB metadata 계약이 유지된다.
-- 장애 원인을 로그와 알람으로 추적할 수 있다.
-- AWS 환경에서 ALB, ECS, S3, Lambda, Aurora, ElastiCache, CloudWatch의 역할이 온프레미스 구성 대비 어떤 운영 문제를 줄이는지 설명할 수 있다.
-- 서버리스 후처리가 backend API와 독립적으로 실행되고 관측되는지 확인할 수 있다.
-- Auto Scaling과 CloudWatch 지표를 통해 성능 병목을 추적하고 확장 판단을 할 수 있다.
-- 최종 검증 절차가 재실행 가능한 문서로 남아 있다.
+## 10. 결과 기록과 판정
+
+작업일지에는 시나리오마다 다음을 남긴다.
+
+| 항목 | 예 |
+| --- | --- |
+| 시나리오 ID·환경 | V-FAIL-02 / 온프레미스 |
+| 커밋·이미지 | `git rev-parse --short HEAD`, `docker compose images backend` |
+| 실행 명령·주요 출력 | 응답 코드, 판정에 쓴 값 (토큰·비밀번호 제외) |
+| 판정 | 통과 / 실패 / 일부 통과(이유) |
+| 한계·후속 | 재현되지 않은 경합, 수동 대기 시간 등 |
+| 정리 | 테스트 파일·계정·`.env` 임시 값 원복 여부 |
+
+작업 완료 판정:
+
+| 작업 | 통과해야 하는 시나리오 |
+| --- | --- |
+| ONP-01 | V-ONP-01 |
+| ONP-02 | V-FUNC-01~04, V-DATA-01~02 |
+| ONP-03 | V-IDEM-01~03, V-FAIL-01~05, V-ADMIN-01~02 |
+| AWS 유지 계층 apply 전 | V-LOC-01~06 |
+| MIG-02 | V-MIG-01~02 |
+| VERIFY-01 | V-AWS-01~03, AWS에서의 V-FUNC·V-IDEM |
+| VERIFY-02 | V-AWS-04~06, V-PERF-01 |
