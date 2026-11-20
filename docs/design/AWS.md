@@ -895,6 +895,8 @@ retention_in_days = var.log_retention_in_days
 
 개발 환경에서는 비용과 디버깅 편의성의 균형을 위해 짧은 보존 기간을 둔다. 운영 환경에서는 감사와 장애 분석 요구사항에 맞춰 늘릴 수 있다.
 
+로그 그룹은 실습 계층에 있어 `dev`를 destroy하면 보존 기간과 관계없이 함께 지워진다. 필요한 근거는 destroy 전에 작업일지로 옮긴다. 지표(CloudWatch metrics)는 리소스를 지워도 최대 15개월 남는다. 로그 형식·요청 ID·연결 구조는 [로그·지표·알람 연결](DEPLOYMENT.md#411-2-로그지표알람-연결과-확인-위치)을 따른다.
+
 ## ALB
 
 ALB는 public subnet에 생성된다.
@@ -939,6 +941,23 @@ Health check path는 다음과 같다.
 ```
 
 Spring Boot 애플리케이션의 `HealthController`가 이 경로를 제공한다. 이 endpoint가 200을 반환해야 ALB가 task를 healthy로 판단한다.
+
+Health check 설정과 의미:
+
+| 설정 | 값 | 의미 |
+| --- | --- | --- |
+| 간격 / 시간 제한 | 30초 / 5초 | |
+| healthy 판정 | 2회 연속 성공 | 새 task는 등록 후 최소 약 1분 뒤 healthy |
+| unhealthy 판정 | 3회 연속 실패 | 죽은 task 감지에 최대 약 1분 30초 |
+| deregistration delay | 300초(기본값, 미설정) | 빠지는 task를 5분 동안 `draining`으로 둔다 |
+
+- 근거 수준: Terraform 초기값이다. 실측 근거로 정한 값이 아니다.
+- 2026-11-20 V-AWS-04 실측: task 중지 시 ALB 502/503이 약 87초 이어졌다. 새 task가 정식으로 `healthy`가 되기까지는 그보다 약 1분 더 걸렸다. 그 사이의 200은 ALB fail-open(모든 target이 unhealthy이면 그래도 전달) 덕분이다([작업일지](../worklogs/2026-11-20.md#verify-02-v-aws-04-v-perf)).
+- 판단:
+  - 간격 10초·healthy 2회·deregistration 30초로 줄이면 복구가 빨라진다.
+  - 너무 민감하면 잠깐 느린 task도 빠지고(GC·DB 재개 중), 배포 중 연결이 끊길 수 있다.
+  - ECS service의 health check grace period로 기동 시간(실측 약 1분 30초)을 보호하는 방법도 있다.
+  - 조정과 재측정은 OPS-01에서 한다.
 
 ## Listener
 
@@ -1054,6 +1073,31 @@ ecs_memory_target_value = 70
 
 CPU 또는 memory 평균 사용률이 target을 넘으면 scale out이 발생하고, 낮게 유지되면 cooldown 이후 scale in된다.
 
+현재 실습 계층 tfvars는 `ecs_min_capacity = 1`, `ecs_max_capacity = 4`다.
+
+| 설정 | 값 | 이렇게 둔 이유 | 근거 수준 |
+| --- | --- | --- | --- |
+| task 범위 | 1~4 | 실습 비용 최소(1), 부하 실험에서 확장을 볼 수 있는 최소 여유(4) | 비용 기준 |
+| CPU 목표 | 60% | 새 task 기동(실측 약 1분 30초) 동안 기존 task가 버틸 여유 40% | 출발값, PERF-01 검증 |
+| 메모리 목표 | 70% | JVM이 힙을 미리 잡아 두는 특성 때문에 CPU보다 높게 | 출발값, JVM에 부적합할 수 있음 |
+| scale out 대기 | 60초 | 부하에는 빨리 대응 | 일반값 |
+| scale in 대기 | 300초 | 늘었다 줄었다를 반복(flapping)하지 않도록 천천히 | 일반값 |
+
+동작 규칙(Application Auto Scaling target tracking):
+
+- 정책마다 CloudWatch 알람 2개(`TargetTracking-...-AlarmHigh`/`AlarmLow`)를 AWS가 자동으로 만든다. 이 알람은 Auto Scaling이 관리하므로 직접 고치거나 지우지 않는다.
+- scale out: 어느 정책이든 목표를 3분 연속 넘으면 task를 더한다.
+- scale in: **모든 정책이** 목표의 90%(CPU 54%, 메모리 63%) 아래로 15분 연속 머물러야 task를 줄인다.
+- `AlarmLow`가 `ALARM`인 것은 "줄일 수 있음" 상태라 정상이다. 최소 1개에서는 아무 일도 일어나지 않는다.
+
+판단 기준:
+
+- 정상: 평소 사용률이 목표보다 충분히 낮고, 부하 때 늘었다가 끝나면 줄어든다.
+- 늘었다 줄었다를 반복하면 목표가 평소 사용량에 너무 가깝다. 목표를 올리거나 scale in 대기를 늘린다.
+- 늘어난 뒤 줄지 않으면 메모리 정책일 가능성이 크다. JVM은 메모리를 잘 돌려주지 않는다. CPU 단독 정책을 검토한다.
+- 최대(4)에 붙어 있으면 용량 부족이나 병목이다. 최대를 올리기 전에 원인부터 찾는다.
+- 2026-11-20 기준 한 번도 확장되지 않았다(평소 CPU 1~2%, 메모리 27%). 실제 확장·축소는 PERF-01에서 확인한다.
+
 개발 비용을 줄이려면 `ecs_desired_count`, `ecs_min_capacity`, `ecs_max_capacity`를 함께 낮춰야 한다.
 
 ```hcl
@@ -1072,9 +1116,11 @@ CloudWatch alarm은 다음 항목을 만든다.
 <name_prefix>-backend-cpu-high
 <name_prefix>-backend-memory-high
 <name_prefix>-alb-target-5xx
+<name_prefix>-alb-elb-5xx
+<name_prefix>-alb-no-healthy-target
 ```
 
-현재 alarm은 상태 감지용이며 SNS topic 또는 PagerDuty 같은 알림 채널에는 아직 연결하지 않는다. 운영 환경에서는 alarm action을 별도 모듈로 분리해 연결한다.
+모든 알람은 유지 계층 SNS topic `<name_prefix>-alarms`로 ALARM과 OK를 이메일로 보낸다([DEC-016](../DECISIONS.md#결정-목록)). 알람별 기준, 이유, 판단, 대응은 [알람 대응](DEPLOYMENT.md#411-1-알람-대응-obs-02)에 있다. 위 `TargetTracking-...` 알람은 Auto Scaling이 만든 것으로 이 목록과 별개다.
 
 ## ECS Service Network
 
@@ -1491,6 +1537,8 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 
 ## 운영 관점
 
+관측 구성(대시보드·저장 쿼리·알람 연결·증상별 확인 위치)은 [DEPLOYMENT 4.11-1·4.11-2](DEPLOYMENT.md#411-1-알람-대응-obs-02), SLI는 [VALIDATION 11장](VALIDATION.md#11-관측-지표와-sli)을 따른다. 아래는 요약이다.
+
 운영에서 확인할 주요 지표는 다음이다.
 
 - ALB target healthy count
@@ -1508,8 +1556,9 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 ```text
 ALB target health
   -> ECS service events
-  -> ECS task stopped reason
+  -> ECS task stopped reason (중지 후 약 1시간만 조회 가능)
   -> CloudWatch container logs
+  -> CloudTrail (누가 StopTask·UpdateService를 했는지)
   -> Aurora/Redis security group
   -> application environment variables
 ```

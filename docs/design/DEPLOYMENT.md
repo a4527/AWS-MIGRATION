@@ -762,7 +762,7 @@ REDIS_SSL_ENABLED=true
 
 ### 4.11-1 알람 대응 (OBS-02)
 
-모든 알람은 유지 계층 SNS topic `<prefix>-alarms`로 알림(`ALARM`)과 복귀(`OK`)를 보낸다. 수신처는 예산 알림 주소이고, 이메일 구독은 처음 한 번 확인 링크를 눌러야 한다. 대시보드 `<prefix>-service`와 Logs Insights 저장 쿼리 `<prefix>/api-sli-by-route`·`<prefix>/request-trace`로 진단한다.
+기준값 대부분은 실측이 아니라 초기 설계의 출발값이다. 아래 "이유·판단"은 그 값을 어떻게 읽고 언제 바꿀지를 적은 것이다. 모든 알람은 유지 계층 SNS topic `<prefix>-alarms`로 알림(`ALARM`)과 복귀(`OK`)를 보낸다. 수신처는 예산 알림 주소이고, 이메일 구독은 처음 한 번 확인 링크를 눌러야 한다. 대시보드 `<prefix>-service`와 Logs Insights 저장 쿼리 `<prefix>/api-sli-by-route`·`<prefix>/request-trace`로 진단한다.
 
 | 알람 | 조건 | 뜻하는 증상 | 진단 | 복구 | 에스컬레이션 |
 | --- | --- | --- | --- | --- | --- |
@@ -774,6 +774,96 @@ REDIS_SSL_ENABLED=true
 | `file-processor-duration` | Lambda p95가 임계값 초과 10분 | 후처리 지연 | Lambda Duration·Invocations, 객체 크기 | 메모리·timeout 조정 | - |
 
 알람은 실습 계층과 함께 만들고 지운다. topic과 구독은 유지 계층이라 다시 만들어도 구독을 다시 확인할 필요가 없다. 실습 계층을 만들 때마다 새 알람이 `INSUFFICIENT_DATA → OK`로 바뀌며 OK 이메일이 한 번씩 온다(2026-11-20 관찰). 실측 감지 시간: Lambda 오류 → ALARM 약 1분 40초, task 중지 → `alb-elb-5xx` ALARM 약 3분, OK 복귀 6~8분.
+
+기준을 이렇게 둔 이유와 판단:
+
+| 알람 | 이유 | 판단 |
+| --- | --- | --- |
+| `alb-target-5xx` (1건/1분) | 실습은 요청이 적어 5xx 한 건도 의미가 있다 | 운영이라면 "5xx 비율 1% 초과 + 요청 N건 이상"처럼 비율로 바꿔야 오탐이 준다 |
+| `alb-elb-5xx` (1건/1분) | target이 없거나 연결이 실패하면 앱이 아니라 ALB가 502/503을 낸다. V-AWS-04에서 `alb-target-5xx`는 이걸 못 잡았다 | 배포·task 교체 중에도 짧게 울릴 수 있다. 배포 시각과 겹치는지 먼저 본다 |
+| `alb-no-healthy-target` (2분) | "서비스 완전 중단"을 따로 알린다 | 2분보다 짧은 중단은 잡지 못한다(V-AWS-04 87초 중단에서 미발화). 짧은 중단은 `alb-elb-5xx`가 맡는다 |
+| `backend-cpu-high`·`memory-high` (10분) | Auto Scaling으로도 해소되지 않는 지속 과부하만 알린다. scaling과 같은 목표값이라 확장 중에는 울리지 않게 기간을 길게 둔다 | running이 max에 붙었는지 함께 본다 |
+| `file-processor-errors` (1건/1분) | 후처리 실패는 태그 누락으로 이어진다 | 업로드 API에는 영향이 없으니 업로드 장애와 구분한다 |
+| `file-processor-duration` (p95 10초, 10분) | Lambda timeout(30초) 전에 경고한다 | 객체 크기 증가인지 코드 지연인지 Duration·Invocations로 구분한다 |
+
+- 데이터 없음은 정상(`notBreaching`)으로 본다. 요청이 없으면 5xx 지표도 없는데, 이를 장애로 보지 않기 위해서다. 예외로 `alb-no-healthy-target`은 데이터 없음을 장애(`breaching`)로 본다. target이 아예 없는 것도 중단이기 때문이다.
+- ALARM과 OK를 모두 보낸다. 장애만큼 복구 시점도 알아야 한다.
+- 감지는 즉시가 아니다. 지표가 1~2분 늦게 들어오고 알람은 다음 평가 주기에 판정한다. 실측(2026-11-20): Lambda 오류 → ALARM 약 1분 40초, task 중지 → `alb-elb-5xx` ALARM 약 3분, OK 복귀 6~8분.
+
+### 4.11-2 로그·지표·알람 연결과 확인 위치
+
+연결 구조:
+
+```text
+[요청] → ALB ───────────────────────────→ ALB 지표 (요청 수, 5xx, 응답 시간, healthy 수)
+          │
+          ▼
+       ECS task (Spring Boot)
+          │ ① RequestLoggingFilter: 요청 ID 부여 → 응답 헤더 X-Request-Id
+          │ ② 요청마다 http_request 로그 (route 패턴, status, durationMs)
+          │ ③ stdout JSON (AWS만, LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs)
+          ▼
+       awslogs → CloudWatch Logs /ecs/<prefix>-backend (14일)
+          │            ├→ Logs Insights 저장 쿼리 <prefix>/api-sli-by-route, <prefix>/request-trace
+          │            └→ 대시보드 <prefix>-service 로그 위젯
+          ▼
+       ECS·Container Insights 지표 (CPU, 메모리, task 수)
+
+[S3 업로드] → S3 이벤트 → Lambda → /aws/lambda/<prefix>-file-processor, Lambda 지표
+
+[지표] → CloudWatch 알람 7개 (실습 계층) ─ ALARM/OK → SNS <prefix>-alarms (유지 계층) → 이메일
+```
+
+이렇게 연결한 이유:
+
+| 선택 | 이유 |
+| --- | --- |
+| 요청 ID 필터를 가장 먼저 실행 | 보안 필터에서 끊기는 401·403도 로그에 남긴다 |
+| 받은 `X-Request-Id` 재사용, 형식이 틀리면 새로 생성 | 사용자·다른 시스템이 같은 ID로 문의하면 바로 찾는다. 공백·줄바꿈·과도한 길이는 로그 조작을 막으려고 바꾼다 |
+| 경로를 `/api/files/{id}` 패턴으로 기록 | API별로 성공률·p95를 묶고, 개별 ID가 로그에 퍼지지 않게 한다 |
+| 본문·쿼리·토큰·파일 내용 미기록 | 로그는 비밀값·개인정보 유출의 대표 경로다(2026-11-20 검색 0건) |
+| JSON은 AWS만 | Logs Insights가 JSON 필드를 자동 인식해 바로 집계한다. 로컬은 사람이 읽는 텍스트가 낫다 |
+| 알람은 실습 계층, SNS는 유지 계층 | 알람은 감시 대상과 함께 생기고 사라진다. 이메일 구독 확인은 한 번만 한다([DEC-016](../DECISIONS.md#결정-목록)) |
+| SNS KMS 암호화 없음 | CloudWatch 발행용 키 정책이 필요 없다. 알림 내용은 알람 이름·상태뿐이다 |
+
+어디서 보나(콘솔은 리전 us-east-1):
+
+- 대시보드: CloudWatch → 대시보드 → `<prefix>-service`
+- 로그 검색: CloudWatch → Logs Insights → 쿼리 탭의 저장 쿼리. `request-trace`는 `REPLACE_WITH_REQUEST_ID`를 응답 헤더 값으로 바꾼다
+- 알람: CloudWatch → 경보 → `<prefix>-*` → 기록 탭(상태 변경·action 실행)
+- CLI:
+
+```bash
+aws logs tail /ecs/fileshare-dev-backend --since 10m --follow
+aws logs filter-log-events --log-group-name /ecs/fileshare-dev-backend --filter-pattern '"<요청ID>"'
+aws cloudwatch describe-alarms --alarm-name-prefix fileshare-dev --query 'MetricAlarms[].[AlarmName,StateValue]' --output table
+aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=StopTask --query 'Events[].[EventTime,Username]' --output text
+```
+
+증상별 확인 순서:
+
+| 증상 | 1순위 | 2순위 | 3순위 |
+| --- | --- | --- | --- |
+| 전체 502/503 | target group의 target health·사유 | ECS 서비스 이벤트 | 중지된 task의 사유·exit code(1시간 안) |
+| 특정 API만 500 | `X-Request-Id` → `request-trace` | `api-sli-by-route`로 경로 확인 | 로그 `Unhandled exception` |
+| task 재시작 반복 | ECS 서비스 이벤트 | backend 로그 마지막 줄(DB 연결 실패 등) | CloudTrail(누가 중지·배포) |
+| 배포 실패 | GitHub Actions 실행 로그 | ECS 서비스 이벤트 | 중지된 task의 `CannotPullContainerError` 등 |
+| 느림 | 대시보드 응답 시간 p95 | `api-sli-by-route` 경로별 p95 | Aurora ACU·연결, ECS CPU |
+| 업로드 후 태그 없음 | Lambda 로그 `ERROR` | `file-processor-errors` 이력 | S3 객체 태그 |
+| 누가 무엇을 바꿨나 | CloudTrail(`StopTask`, `UpdateService`, `RegisterTaskDefinition`) | Terraform state 버전 | git log |
+
+보관 기간(이 시간이 지나면 원인을 볼 수 없다):
+
+| 대상 | 기간 |
+| --- | --- |
+| ECS 중지된 task 상세(`stoppedReason`, exit code) | 약 1시간. 이후 콘솔에서 "콘텐츠를 찾을 수 없음" |
+| ECS 서비스 이벤트 | 최근 100개 |
+| CloudWatch 로그 | 14일. `dev` destroy 시 로그 그룹째 삭제 |
+| CloudWatch 지표 | 최대 15개월. destroy 후에도 남음 |
+| CloudTrail 이벤트 기록 | 90일 |
+| 알람·대시보드 | `dev` destroy 시 삭제 |
+
+중지 사유를 1시간 넘게 남기려면 EventBridge `ECS Task State Change`(STOPPED)를 로그 그룹에 저장해야 한다. 미구현이고 OPS-01 후보다.
 
 ### 4.12 정리
 
