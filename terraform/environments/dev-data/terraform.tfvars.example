@@ -35,3 +35,6 @@ budget_filter_by_owner_tag = true
 
 # Extra tags. Do not set Owner here; var.owner always wins.
 tags = {}
+
+# IAC-03: state bucket from terraform/bootstrap output state_bucket_name.
+terraform_state_bucket_name = "replace-with-terraform-state-bucket"

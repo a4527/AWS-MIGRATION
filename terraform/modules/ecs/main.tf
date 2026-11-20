@@ -78,6 +78,8 @@ resource "aws_lb" "application" {
   load_balancer_type = "application"
   security_groups    = [var.alb_security_group_id]
   subnets            = var.public_subnet_ids
+  # Reject requests with malformed header names instead of forwarding them (IAC-03 scan).
+  drop_invalid_header_fields = true
 
   tags = var.tags
 }
@@ -174,7 +176,7 @@ resource "aws_ecs_task_definition" "application" {
         }
       ]
 
-      environment = [
+      environment = concat([
         {
           name  = "SPRING_PROFILES_ACTIVE"
           value = "postgres,redis,s3"
@@ -216,7 +218,7 @@ resource "aws_ecs_task_definition" "application" {
           name  = "LOGGING_STRUCTURED_FORMAT_CONSOLE"
           value = "ecs"
         }
-      ]
+      ], [for name, value in var.extra_environment : { name = name, value = value }])
 
       # SEC-01: resolved by the execution role when the task starts. The task
       # definition holds only parameter ARNs.
@@ -251,6 +253,13 @@ resource "aws_ecs_service" "application" {
   task_definition = aws_ecs_task_definition.application.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
+
+  # CICD-03: tasks that fail to start or fail health checks roll the service
+  # back to the last completed deployment automatically.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   # Tasks inherit the service tags (including Owner).
   enable_ecs_managed_tags = true
@@ -373,13 +382,16 @@ resource "aws_cloudwatch_metric_alarm" "service_memory_high" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "target_5xx" {
-  alarm_name          = "${var.name_prefix}-alb-target-5xx"
-  alarm_description   = "Backend (target) returned 5xx responses."
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "HTTPCode_Target_5XX_Count"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
+  alarm_name        = "${var.name_prefix}-alb-target-5xx"
+  alarm_description = "Backend (target) returned 5xx responses."
+  namespace         = "AWS/ApplicationELB"
+  metric_name       = "HTTPCode_Target_5XX_Count"
+  statistic         = "Sum"
+  period            = 60
+  # Metrics arrive 1-2 minutes late; alarm if any of the last 3 minutes breached
+  # (a short burst was missed with a single period, OPS-01 T3).
+  evaluation_periods  = 3
+  datapoints_to_alarm = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
@@ -397,13 +409,16 @@ resource "aws_cloudwatch_metric_alarm" "target_5xx" {
 # OBS-02: the ALB itself answers 502/503 when no healthy target exists (task
 # stopped, failed deployment). Target 5xx alone misses that (V-AWS-04).
 resource "aws_cloudwatch_metric_alarm" "elb_5xx" {
-  alarm_name          = "${var.name_prefix}-alb-elb-5xx"
-  alarm_description   = "ALB returned 5xx itself (no healthy target, timeout, or connection error)."
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "HTTPCode_ELB_5XX_Count"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
+  alarm_name        = "${var.name_prefix}-alb-elb-5xx"
+  alarm_description = "ALB returned 5xx itself (no healthy target, timeout, or connection error)."
+  namespace         = "AWS/ApplicationELB"
+  metric_name       = "HTTPCode_ELB_5XX_Count"
+  statistic         = "Sum"
+  period            = 60
+  # Metrics arrive 1-2 minutes late; alarm if any of the last 3 minutes breached
+  # (a short burst was missed with a single period, OPS-01 T3).
+  evaluation_periods  = 3
+  datapoints_to_alarm = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
@@ -420,22 +435,131 @@ resource "aws_cloudwatch_metric_alarm" "elb_5xx" {
 resource "aws_cloudwatch_metric_alarm" "no_healthy_target" {
   alarm_name          = "${var.name_prefix}-alb-no-healthy-target"
   alarm_description   = "Backend target group has no healthy target for 2 minutes."
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "HealthyHostCount"
-  statistic           = "Minimum"
-  period              = 60
   evaluation_periods  = 2
   threshold           = 1
   comparison_operator = "LessThanThreshold"
-  # No data means no target registered at all, which is also an outage.
-  treat_missing_data = "breaching"
-  alarm_actions      = var.alarm_action_arns
-  ok_actions         = var.alarm_action_arns
+  treat_missing_data  = "breaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
 
-  dimensions = {
-    LoadBalancer = aws_lb.application.arn_suffix
-    TargetGroup  = aws_lb_target_group.application.arn_suffix
+  # ALB stops publishing HealthyHostCount when no target is registered, so a
+  # total outage left gaps and the plain alarm stayed OK (OPS-01 T5). FILL
+  # turns those gaps into 0.
+  metric_query {
+    id          = "healthy"
+    expression  = "FILL(raw, 0)"
+    label       = "HealthyHostCount (missing = 0)"
+    return_data = true
   }
+
+  metric_query {
+    id = "raw"
+
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "HealthyHostCount"
+      stat        = "Minimum"
+      period      = 60
+
+      dimensions = {
+        LoadBalancer = aws_lb.application.arn_suffix
+        TargetGroup  = aws_lb_target_group.application.arn_suffix
+      }
+    }
+  }
+
+  tags = var.tags
+}
+
+# CICD-02 (DEC-017): staging service in the same cluster. CD deploys a new
+# revision here first, runs smoke tests through the ALB with the
+# X-Deploy-Stage header, and promotes the same revision to the main service.
+locals {
+  routing_listener_arn = var.certificate_arn == null ? aws_lb_listener.http.arn : aws_lb_listener.https[0].arn
+}
+
+resource "aws_lb_target_group" "staging" {
+  count = var.staging_enabled ? 1 : 0
+
+  name        = "${var.name_prefix}-backend-stg"
+  port        = var.container_port
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = var.vpc_id
+  # Staging tasks are replaced on every deploy; do not hold them for 5 minutes.
+  deregistration_delay = 30
+
+  health_check {
+    enabled             = true
+    healthy_threshold   = 2
+    interval            = 15
+    matcher             = "200"
+    path                = var.health_check_path
+    protocol            = "HTTP"
+    timeout             = 5
+    unhealthy_threshold = 3
+  }
+
+  tags = var.tags
+}
+
+# Not a security boundary: anyone who sends the header reaches staging. It
+# shares the data layer with the main service (lab cost trade-off, DEC-017).
+resource "aws_lb_listener_rule" "staging" {
+  count = var.staging_enabled ? 1 : 0
+
+  listener_arn = local.routing_listener_arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.staging[0].arn
+  }
+
+  condition {
+    http_header {
+      http_header_name = "X-Deploy-Stage"
+      values           = [var.staging_header_value]
+    }
+  }
+
+  tags = var.tags
+}
+
+resource "aws_ecs_service" "staging" {
+  count = var.staging_enabled ? 1 : 0
+
+  name            = "${var.name_prefix}-backend-staging"
+  cluster         = aws_ecs_cluster.this.id
+  task_definition = aws_ecs_task_definition.application.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  enable_ecs_managed_tags = true
+  propagate_tags          = "SERVICE"
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  network_configuration {
+    assign_public_ip = false
+    security_groups  = [var.application_security_group_id]
+    subnets          = var.private_subnet_ids
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.staging[0].arn
+    container_name   = "backend"
+    container_port   = var.container_port
+  }
+
+  depends_on = [aws_lb_listener_rule.staging]
 
   tags = var.tags
 }

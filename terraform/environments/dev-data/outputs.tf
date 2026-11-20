@@ -67,3 +67,13 @@ output "budget_name" {
   description = "AWS Budgets budget name."
   value       = aws_budgets_budget.monthly.name
 }
+
+output "terraform_plan_role_arn" {
+  description = "GitHub Actions secret AWS_TF_PLAN_ROLE_ARN."
+  value       = module.terraform_ci.plan_role_arn
+}
+
+output "terraform_apply_role_arn" {
+  description = "GitHub Actions secret AWS_TF_APPLY_ROLE_ARN."
+  value       = module.terraform_ci.apply_role_arn
+}

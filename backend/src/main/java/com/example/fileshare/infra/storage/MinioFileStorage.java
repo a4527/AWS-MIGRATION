@@ -2,6 +2,7 @@ package com.example.fileshare.infra.storage;
 
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
+import io.minio.errors.ErrorResponseException;
 import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
@@ -73,6 +74,11 @@ public class MinioFileStorage implements FileStorage {
                     .object(storagePath)
                     .build());
             return new StorageObject(new InputStreamResource(inputStream), stat.size());
+        } catch (ErrorResponseException exception) {
+            if ("NoSuchKey".equals(exception.errorResponse().code())) {
+                throw new StorageObjectNotFoundException(storagePath, exception);
+            }
+            throw new IOException("Failed to load file from MinIO", exception);
         } catch (Exception exception) {
             throw new IOException("Failed to load file from MinIO", exception);
         }

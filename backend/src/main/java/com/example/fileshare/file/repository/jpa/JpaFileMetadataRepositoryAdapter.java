@@ -1,5 +1,11 @@
 package com.example.fileshare.file.repository.jpa;
 
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+
+import com.example.fileshare.file.domain.ScanStatus;
+
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.FileStatus;
 import com.example.fileshare.file.repository.FileMetadataRepository;
@@ -39,5 +45,16 @@ public class JpaFileMetadataRepositoryAdapter implements FileMetadataRepository 
                 .stream()
                 .map(FileMetadataEntity::toDomain)
                 .toList();
+    }
+
+    @Override
+    @Transactional
+    public int applyScanResult(String storagePath, ScanStatus scanStatus, FileStatus status, Instant at) {
+        return jpaRepository.applyScanResult(storagePath, scanStatus, status, at);
+    }
+
+    @Override
+    public List<String> findPendingScanBefore(Instant before) {
+        return jpaRepository.findPendingScanBefore(before);
     }
 }

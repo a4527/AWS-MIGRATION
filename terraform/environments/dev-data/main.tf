@@ -120,6 +120,7 @@ module "github_actions" {
   ecr_repository_arn          = module.ecr.repository_arns["backend"]
   ecs_cluster_arn             = local.ecs_cluster_arn
   ecs_service_arn             = local.ecs_service_arn
+  extra_ecs_service_arns      = ["${local.arn_prefix}:ecs:${var.aws_region}:${local.account_id}:service/${local.name_prefix}-ecs/${local.name_prefix}-backend-staging"]
   ecs_task_role_arn           = local.ecs_task_role_arn
   ecs_execution_role_arn      = local.ecs_execution_role_arn
   aurora_cluster_arn          = module.aurora.cluster_arn
@@ -143,6 +144,19 @@ resource "aws_sns_topic_subscription" "alarm_email" {
   topic_arn = aws_sns_topic.alarms.arn
   protocol  = "email"
   endpoint  = each.value
+}
+
+# IAC-03: Terraform CI roles (plan/drift read-only, apply after approval).
+module "terraform_ci" {
+  source = "../../modules/terraform-ci"
+
+  name_prefix       = local.name_prefix
+  oidc_provider_arn = module.github_actions.oidc_provider_arn
+  github_repository = var.github_repository
+  github_branch     = var.github_branch
+  state_bucket_name = var.terraform_state_bucket_name
+  file_bucket_name  = var.file_bucket_name
+  tags              = local.common_tags
 }
 
 # Account cost guard (PORT-01). Kept in the persistent layer so it survives lab teardown.

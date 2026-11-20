@@ -14,3 +14,47 @@ vulnerabilities:
       Spring Framework 7.0.9. The app has no SSE endpoints and no view fragments.
       Approved 2026-11-20; remove with the Spring Boot 4 upgrade.
     expired_at: 2026-12-31
+
+# IaC misconfigurations accepted for the lab (IAC-03). Reviewed 2026-11-20.
+misconfigurations:
+  - id: AVD-AWS-0031
+    paths: ["modules/ecr/main.tf"]
+    statement: >-
+      Mutable tags are needed for the "latest" bootstrap pointer of a recreated
+      lab layer. Deployments pin images by digest (DEC-015, DEC-017).
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0053
+    paths: ["modules/ecs/main.tf"]
+    statement: The ALB is the public entry point of the service by design.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0054
+    paths: ["modules/ecs/main.tf"]
+    statement: >-
+      The lab has no domain, so only HTTP is available. Setting domain_name and
+      route53_hosted_zone_name turns on HTTPS with an HTTP->HTTPS redirect.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0079
+    paths: ["modules/aurora/main.tf"]
+    statement: >-
+      Storage is encrypted with the AWS managed key (storage_encrypted = true).
+      A customer managed key adds cost and key-policy work without a lab need.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0132
+    paths: ["modules/s3/main.tf", "bootstrap/main.tf"]
+    statement: >-
+      SSE-S3 (AES256) encrypts the file and state buckets. A customer managed
+      key would also need GuardDuty and replication key permissions.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0095
+    paths: ["environments/dev-data/main.tf"]
+    statement: >-
+      DEC-016: the alarm topic carries only alarm names and states; encrypting
+      it with KMS would require a key policy for CloudWatch.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0104
+    paths: ["modules/security-groups/main.tf"]
+    statement: >-
+      Tasks and Lambda reach AWS APIs (ECR, S3, SQS, SSM, Logs) through NAT
+      without VPC endpoints, so egress cannot be narrowed to fixed CIDRs yet.
+      Revisit with VPC endpoints (ARCH-01).
+    expired_at: 2027-05-31

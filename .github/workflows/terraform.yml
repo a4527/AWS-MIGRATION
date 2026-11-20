@@ -1,0 +1,259 @@
+name: Terraform
+
+# IAC-03: PR = static checks + plan (read-only role). main = plan, then apply
+# the exact saved plan after approval (lab layer only). Daily = drift check.
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  schedule:
+    - cron: "0 0 * * *" # 09:00 KST
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_IN_AUTOMATION: "1"
+  TF_INPUT: "0"
+  TF_VERSION: "1.17.2"
+
+jobs:
+  static:
+    name: fmt, validate, IaC scan
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform
+
+      - name: terraform validate
+        run: |
+          for d in terraform/environments/dev-data terraform/environments/dev terraform/bootstrap; do
+            terraform -chdir="$d" init -backend=false -input=false > /dev/null
+            terraform -chdir="$d" validate
+          done
+
+      # Misconfiguration scan. HIGH/CRITICAL findings are reported in the job
+      # log and summary; accepted ones are listed in .trivyignore.yaml.
+      - name: Trivy IaC scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: terraform
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
+
+  plan:
+    name: plan (${{ matrix.layer }})
+    runs-on: ubuntu-latest
+    needs: static
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: [dev-data, dev]
+    outputs:
+      dev_present: ${{ steps.present.outputs.dev_present }}
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.layer }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # tfvars and the state bucket name are account specific, so they live in
+      # secrets instead of the repository.
+      - name: Write backend config and tfvars
+        env:
+          STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TFVARS_DATA: ${{ secrets.TF_VARS_DEV_DATA }}
+          TFVARS_DEV: ${{ secrets.TF_VARS_DEV }}
+        run: |
+          printf 'bucket = "%s"\n' "$STATE_BUCKET" > backend.hcl
+          if [ "${{ matrix.layer }}" = "dev-data" ]; then printf '%s\n' "$TFVARS_DATA" > terraform.tfvars; else printf '%s\n' "$TFVARS_DEV" > terraform.tfvars; fi
+
+      - run: terraform init -backend-config=backend.hcl -input=false
+
+      - name: Is the lab layer up?
+        id: present
+        if: matrix.layer == 'dev'
+        run: |
+          COUNT=$(terraform state list 2>/dev/null | grep -c '^module.ecs.aws_ecs_service.application$' || true)
+          echo "dev_present=$([ "$COUNT" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      # Read-only role: no state lock (the plan role cannot write the lock).
+      - name: terraform plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -lock=false -input=false -no-color -detailed-exitcode -out=tfplan > plan.txt 2>&1
+          code=$?
+          set -e
+          {
+            echo "### ${{ matrix.layer }} plan (exit $code: 0 = no changes, 2 = changes)"
+            echo '```'
+            grep -E '^(Plan:|No changes|Error)' plan.txt || true
+            grep -E '^  # ' plan.txt | head -40 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = "1" ] && { cat plan.txt; exit 1; }
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Upload saved plan (dev, main only)
+        if: matrix.layer == 'dev' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-dev
+          path: |
+            terraform/environments/dev/tfplan
+            terraform/environments/dev/.terraform.lock.hcl
+          retention-days: 1
+
+  # Applies the plan that was reviewed, not a fresh one. Only the lab layer;
+  # the data layer (Aurora, S3, state-adjacent resources) stays a local apply.
+  apply:
+    name: apply (dev, approved)
+    runs-on: ubuntu-latest
+    needs: plan
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.plan.outputs.dev_present == 'true'
+    environment: terraform-dev
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform/environments/dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TF_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-dev
+          path: terraform/environments/dev
+
+      - name: Write backend config and tfvars
+        env:
+          STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TFVARS_DEV: ${{ secrets.TF_VARS_DEV }}
+        run: |
+          printf 'bucket = "%s"\n' "$STATE_BUCKET" > backend.hcl
+          printf '%s\n' "$TFVARS_DEV" > terraform.tfvars
+
+      - run: terraform init -backend-config=backend.hcl -input=false
+
+      # A saved plan refuses to apply if the state changed since it was made.
+      - run: terraform apply -input=false -no-color tfplan
+
+  drift:
+    name: drift (${{ matrix.layer }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        layer: [dev-data, dev]
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.layer }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend config and tfvars
+        env:
+          STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TFVARS_DATA: ${{ secrets.TF_VARS_DEV_DATA }}
+          TFVARS_DEV: ${{ secrets.TF_VARS_DEV }}
+        run: |
+          printf 'bucket = "%s"\n' "$STATE_BUCKET" > backend.hcl
+          if [ "${{ matrix.layer }}" = "dev-data" ]; then printf '%s\n' "$TFVARS_DATA" > terraform.tfvars; else printf '%s\n' "$TFVARS_DEV" > terraform.tfvars; fi
+
+      - run: terraform init -backend-config=backend.hcl -input=false
+
+      # The lab layer is usually destroyed; a full create plan is not drift.
+      - name: Detect drift
+        run: |
+          if [ "${{ matrix.layer }}" = "dev" ] && ! terraform state list 2>/dev/null | grep -q '^module.ecs.aws_ecs_service.application$'; then
+            echo "Lab layer is down; skipping drift check." >> "$GITHUB_STEP_SUMMARY"; exit 0
+          fi
+          set +e
+          terraform plan -lock=false -refresh-only -input=false -no-color -detailed-exitcode > drift.txt 2>&1
+          code=$?
+          set -e
+          if [ "$code" = "2" ]; then
+            {
+              echo "### Drift detected in ${{ matrix.layer }}"
+              echo '```'
+              grep -E '^  # |^  [~+-] ' drift.txt | head -60
+              echo '```'
+              echo "Review and either apply the code (restores it) or update the code to accept the change. Runbook: docs/design/DEPLOYMENT.md 4.1-2."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Drift detected in ${{ matrix.layer }}"
+            exit 1
+          fi
+          [ "$code" = "1" ] && { cat drift.txt; exit 1; }
+          echo "No drift in ${{ matrix.layer }}." >> "$GITHUB_STEP_SUMMARY"

@@ -97,3 +97,8 @@ output "ecs_task_definition_template_arn" {
   description = "Terraform task definition template for initial deployment or explicit configuration rollout."
   value       = module.ecs.task_definition_template_arn
 }
+
+output "ecs_staging_service_name" {
+  description = "Staging ECS service name used by CD."
+  value       = module.ecs.staging_service_name
+}

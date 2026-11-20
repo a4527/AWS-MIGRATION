@@ -186,3 +186,58 @@ resource "aws_cloudwatch_query_definition" "request_trace" {
   log_group_names = [local.backend_logs]
   query_string    = local.request_trace_query
 }
+
+# OPS-01: ECS keeps stopped-task details (stoppedReason, exit code) for only
+# about an hour. Keep every STOPPED event of this cluster in a log group so the
+# cause of a night-time failure can still be read the next day.
+resource "aws_cloudwatch_log_group" "ecs_task_stopped" {
+  name              = "/aws/events/${local.name_prefix}-ecs-task-stopped"
+  retention_in_days = var.cloudwatch_log_retention_in_days
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_rule" "ecs_task_stopped" {
+  name        = "${local.name_prefix}-ecs-task-stopped"
+  description = "ECS task STOPPED events of the backend cluster (stoppedReason, exit code)."
+
+  event_pattern = jsonencode({
+    source        = ["aws.ecs"]
+    "detail-type" = ["ECS Task State Change"]
+    detail = {
+      clusterArn = [module.ecs.cluster_arn]
+      lastStatus = ["STOPPED"]
+    }
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "ecs_task_stopped" {
+  rule = aws_cloudwatch_event_rule.ecs_task_stopped.name
+  arn  = aws_cloudwatch_log_group.ecs_task_stopped.arn
+}
+
+# EventBridge writes to CloudWatch Logs through a log resource policy.
+data "aws_iam_policy_document" "events_to_logs" {
+  statement {
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${aws_cloudwatch_log_group.ecs_task_stopped.arn}:*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com", "delivery.logs.amazonaws.com"]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudwatch_event_rule.ecs_task_stopped.arn]
+    }
+  }
+}
+
+resource "aws_cloudwatch_log_resource_policy" "events_to_logs" {
+  policy_name     = "${local.name_prefix}-events-to-logs"
+  policy_document = data.aws_iam_policy_document.events_to_logs.json
+}

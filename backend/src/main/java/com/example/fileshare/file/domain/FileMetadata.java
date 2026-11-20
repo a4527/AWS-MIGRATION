@@ -98,6 +98,13 @@ public class FileMetadata {
         return updatedAt;
     }
 
+    /** 검사 결과를 반영한다(FILE-03). 상태 전이 판단은 저장소의 조건부 갱신이 맡는다. */
+    public void applyScanResult(ScanStatus scanStatus, FileStatus status, Instant at) {
+        this.scanStatus = scanStatus;
+        this.status = status;
+        this.updatedAt = at;
+    }
+
     public void markDeleted() {
         this.status = FileStatus.DELETED;
         this.deletedAt = Instant.now();

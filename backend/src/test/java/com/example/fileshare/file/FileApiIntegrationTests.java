@@ -51,7 +51,7 @@ class FileApiIntegrationTests {
                 .andExpect(jsonPath("$.message").value("File uploaded"))
                 .andExpect(jsonPath("$.data.originalFileName").value("report.txt"))
                 .andExpect(jsonPath("$.data.status").value("available"))
-                .andExpect(jsonPath("$.data.scanStatus").value("CLEAN"))
+                .andExpect(jsonPath("$.data.scanStatus").value("NOT_SCANNED"))
                 .andReturn();
 
         long fileId = readFileId(uploadResult);

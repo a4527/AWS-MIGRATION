@@ -1,5 +1,9 @@
 package com.example.fileshare.file.repository;
 
+import java.time.Instant;
+
+import com.example.fileshare.file.domain.ScanStatus;
+
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.FileStatus;
 import java.util.Comparator;
@@ -45,6 +49,29 @@ public class InMemoryFileMetadataRepository implements FileMetadataRepository {
                 .filter(file -> file.ownerId().equals(ownerId))
                 .filter(file -> file.status() != FileStatus.DELETED)
                 .sorted(Comparator.comparing(FileMetadata::createdAt).reversed())
+                .toList();
+    }
+
+    @Override
+    public synchronized int applyScanResult(String storagePath, ScanStatus scanStatus, FileStatus status, Instant at) {
+        int updated = 0;
+        for (FileMetadata file : filesById.values()) {
+            if (file.storagePath().equals(storagePath)
+                    && file.scanStatus() == ScanStatus.PENDING
+                    && file.status() != FileStatus.DELETED) {
+                file.applyScanResult(scanStatus, status, at);
+                updated++;
+            }
+        }
+        return updated;
+    }
+
+    @Override
+    public List<String> findPendingScanBefore(Instant before) {
+        return filesById.values().stream()
+                .filter(file -> file.scanStatus() == ScanStatus.PENDING && file.status() != FileStatus.DELETED)
+                .filter(file -> file.createdAt().isBefore(before))
+                .map(FileMetadata::storagePath)
                 .toList();
     }
 }

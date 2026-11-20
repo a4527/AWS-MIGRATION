@@ -24,9 +24,12 @@ data "aws_iam_policy_document" "deploy_assume_role" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_repository}:ref:refs/heads/${var.github_branch}",
-      ]
+      # Jobs bound to a GitHub environment get an environment-scoped subject
+      # instead of the branch one (CICD-02). Only these environments may deploy.
+      values = concat(
+        ["repo:${var.github_repository}:ref:refs/heads/${var.github_branch}"],
+        [for e in var.github_environments : "repo:${var.github_repository}:environment:${e}"],
+      )
     }
   }
 }
@@ -80,7 +83,7 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "ecs:UpdateService",
     ]
-    resources = [var.ecs_service_arn]
+    resources = concat([var.ecs_service_arn], var.extra_ecs_service_arns)
 
     condition {
       test     = "ArnEquals"
@@ -124,6 +127,13 @@ data "aws_iam_policy_document" "deploy" {
       var.aurora_cluster_arn,
       var.aurora_instance_arn_pattern,
     ]
+  }
+
+  # CICD-03: post-deploy check reads ALB 5xx counts.
+  statement {
+    sid       = "AllowMetricRead"
+    actions   = ["cloudwatch:GetMetricStatistics", "cloudwatch:GetMetricData"]
+    resources = ["*"]
   }
 
   statement {

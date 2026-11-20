@@ -5,10 +5,14 @@ import com.example.fileshare.common.error.ErrorCode;
 import com.example.fileshare.common.exception.BusinessException;
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.FileStatus;
+import com.example.fileshare.file.domain.ScanStatus;
 import com.example.fileshare.file.repository.FileMetadataRepository;
 import com.example.fileshare.infra.storage.FileStorage;
 import com.example.fileshare.infra.storage.StorageObject;
+import com.example.fileshare.infra.storage.StorageObjectNotFoundException;
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.stereotype.Service;
@@ -20,6 +24,8 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class FileService {
+
+    private static final Logger log = LoggerFactory.getLogger(FileService.class);
 
     private final FileMetadataRepository fileMetadataRepository;
     private final FileStorage fileStorage;
@@ -51,6 +57,10 @@ public class FileService {
         if (metadata.status() == FileStatus.QUARANTINED) {
             throw new BusinessException(ErrorCode.FILE_QUARANTINED);
         }
+        // FILE-03: 검사가 끝나기 전에는 내려주지 않는다(fail closed).
+        if (metadata.status() == FileStatus.SCANNING || metadata.scanStatus() == ScanStatus.PENDING) {
+            throw new BusinessException(ErrorCode.FILE_SCAN_PENDING);
+        }
         if (metadata.status() != FileStatus.AVAILABLE) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
         }
@@ -58,8 +68,14 @@ public class FileService {
         try {
             StorageObject storageObject = fileStorage.load(metadata.storagePath());
             return new FileDownload(metadata, storageObject.resource(), storageObject.contentLength());
-        } catch (IOException exception) {
+        } catch (StorageObjectNotFoundException exception) {
+            // DB에는 있는데 객체가 없다: 정합성 문제다(관리자 고아 점검 대상의 반대 경우).
+            log.error("Stored object missing for an existing file. fileId={}, storagePath={}", fileId, metadata.storagePath(), exception);
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND);
+        } catch (IOException exception) {
+            // 접근 거부·저장소 장애. "파일 없음"으로 알리면 사용자와 운영자 모두 원인을 잘못 판단한다(OPS-01 T3).
+            log.error("File storage unavailable on download. fileId={}, storagePath={}", fileId, metadata.storagePath(), exception);
+            throw new BusinessException(ErrorCode.FILE_STORAGE_UNAVAILABLE);
         }
     }
 

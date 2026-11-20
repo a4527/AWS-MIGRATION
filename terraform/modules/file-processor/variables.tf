@@ -65,3 +65,9 @@ variable "alarm_action_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "enable_eventbridge_notifications" {
+  description = "Keep S3 -> EventBridge notifications on (required by GuardDuty Malware Protection for S3)."
+  type        = bool
+  default     = false
+}
