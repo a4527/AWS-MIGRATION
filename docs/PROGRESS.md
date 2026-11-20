@@ -22,7 +22,7 @@
 | AWS 배포·비교·장애 복구 | MIG-02 배포·smoke, VERIFY-01·02 완료(2026-11-20) | [작업일지](worklogs/2026-11-20.md#1회차-자동-배포-첫-실행과-mig-02verify-01) |
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
-| AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일 수신은 사용자 확인 대기 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
+| AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
 | GitHub Actions | actionlint, 로컬 Trivy(예외 2건 적용 후 0건), 테스트 48개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
