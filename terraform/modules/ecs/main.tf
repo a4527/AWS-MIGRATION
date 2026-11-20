@@ -253,6 +253,10 @@ resource "aws_ecs_service" "application" {
   task_definition = aws_ecs_task_definition.application.arn
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
+  # The app needs about 60 s to start on 0.5 vCPU. Without a grace period ECS
+  # killed staging tasks on ALB health failures before they were up (exit 143),
+  # and the circuit breaker failed the deploy (2026-11-20).
+  health_check_grace_period_seconds = var.health_check_grace_period_seconds
 
   # CICD-03: tasks that fail to start or fail health checks roll the service
   # back to the last completed deployment automatically.
@@ -534,6 +538,8 @@ resource "aws_ecs_service" "staging" {
   task_definition = aws_ecs_task_definition.application.arn
   desired_count   = 1
   launch_type     = "FARGATE"
+
+  health_check_grace_period_seconds = var.health_check_grace_period_seconds
 
   deployment_circuit_breaker {
     enable   = true

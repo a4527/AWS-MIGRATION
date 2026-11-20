@@ -173,3 +173,9 @@ variable "extra_environment" {
   type        = map(string)
   default     = {}
 }
+
+variable "health_check_grace_period_seconds" {
+  description = "Seconds ECS ignores ALB health checks after a task starts (startup is about 60 s)."
+  type        = number
+  default     = 120
+}
