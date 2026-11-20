@@ -760,6 +760,21 @@ Application SG -> Redis SG 6379
 REDIS_SSL_ENABLED=true
 ```
 
+### 4.11-1 알람 대응 (OBS-02)
+
+모든 알람은 유지 계층 SNS topic `<prefix>-alarms`로 알림(`ALARM`)과 복귀(`OK`)를 보낸다. 수신처는 예산 알림 주소이고, 이메일 구독은 처음 한 번 확인 링크를 눌러야 한다. 대시보드 `<prefix>-service`와 Logs Insights 저장 쿼리 `<prefix>/api-sli-by-route`·`<prefix>/request-trace`로 진단한다.
+
+| 알람 | 조건 | 뜻하는 증상 | 진단 | 복구 | 에스컬레이션 |
+| --- | --- | --- | --- | --- | --- |
+| `alb-no-healthy-target` | healthy target 최소 0이 2분 | 서비스 중단. ALB가 502/503 또는 fail-open | target health reason → ECS service events → stopped task reason·exit code → backend 로그(기동 오류, DB 연결) | task 기동 실패면 원인 수정 후 재배포 또는 직전 정상 revision으로 `update-service`. DB 일시정지면 [DB 깨우기](#46-github-actions-배포-실행) | 10분 안에 복구되지 않거나 원인이 AWS 측(용량·서비스 장애)이면 실습 중단·기록 |
+| `alb-elb-5xx` | ALB 자체 5xx 1건 이상/1분 | target 없음·연결 오류·timeout. task 교체 중에도 짧게 발생 | 대시보드 target health·running task, ALB 5xx 시각과 배포·task 교체 시각 대조 | 배포·task 교체 중이면 안정화 대기(V-AWS-04 실측 약 90초). 반복되면 위 항목 | 배포와 무관하게 반복되면 health check·deregistration 설정 검토(OPS-01) |
+| `alb-target-5xx` | backend 5xx 1건 이상/1분 | 애플리케이션 오류 | `request-trace` 쿼리에 응답 헤더 `X-Request-Id` 넣어 요청 추적, `api-sli-by-route`로 경로 확인, `Unhandled exception` 로그 | 원인 수정 배포. 배포 직후면 직전 revision으로 롤백 | 데이터 정합성(업로드·삭제) 경로면 [관리자 고아 객체 점검](VALIDATION.md#6-관리자-정합성-점검) |
+| `backend-cpu-high`·`backend-memory-high` | 평균이 scaling 목표값 초과 10분 | 부하 또는 누수. Auto Scaling이 함께 동작 | ECS 지표, running/desired, 요청량·p95 | 확장 범위 안이면 관찰. max에 도달하면 원인 확인 후 범위 조정 | 지속되면 PERF-01 조건으로 재현 |
+| `file-processor-errors` | Lambda 오류 1건 이상/1분 | S3 후처리 실패(태그 누락) | Lambda 로그 `ERROR`, 대상 객체 태그 | 원인 수정 후 해당 객체를 다시 처리(같은 키로 이벤트 재전송 또는 수동 invoke) | 반복되면 업로드 API와 분리된 경로임을 확인하고 FILE-03에서 처리 |
+| `file-processor-duration` | Lambda p95가 임계값 초과 10분 | 후처리 지연 | Lambda Duration·Invocations, 객체 크기 | 메모리·timeout 조정 | - |
+
+알람은 실습 계층과 함께 만들고 지운다. topic과 구독은 유지 계층이라 다시 만들어도 구독을 다시 확인할 필요가 없다. 실습 계층을 만들 때마다 새 알람이 `INSUFFICIENT_DATA → OK`로 바뀌며 OK 이메일이 한 번씩 온다(2026-11-20 관찰). 실측 감지 시간: Lambda 오류 → ALARM 약 1분 40초, task 중지 → `alb-elb-5xx` ALARM 약 3분, OK 복귀 6~8분.
+
 ### 4.12 정리
 
 실습이 끝나면 비용 방지를 위해 **실습 계층만** 삭제한다.
