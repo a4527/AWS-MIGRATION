@@ -63,6 +63,11 @@ data "aws_ecr_repository" "backend" {
   name = "${local.name_prefix}-backend"
 }
 
+# OBS-02: alarm topic owned by the data layer.
+data "aws_sns_topic" "alarms" {
+  name = "${local.name_prefix}-alarms"
+}
+
 data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}

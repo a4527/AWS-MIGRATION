@@ -87,6 +87,7 @@ module "file_processor" {
   timeout_seconds             = var.file_processor_timeout_seconds
   log_retention_in_days       = var.cloudwatch_log_retention_in_days
   duration_alarm_threshold_ms = var.file_processor_duration_alarm_threshold_ms
+  alarm_action_arns           = [data.aws_sns_topic.alarms.arn]
   tags                        = local.common_tags
 }
 
@@ -148,6 +149,7 @@ module "ecs" {
   redis_host                      = module.elasticache.primary_endpoint_address
   app_jwt_secret_parameter_arn    = aws_ssm_parameter.app_jwt_secret.arn
   app_policy_arns                 = [module.iam.application_files_policy_arn]
+  alarm_action_arns               = [data.aws_sns_topic.alarms.arn]
   tags                            = local.common_tags
 
   # Tasks pull images and reach AWS APIs through the NAT route.
