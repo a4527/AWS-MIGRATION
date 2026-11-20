@@ -648,3 +648,55 @@ docker stats --no-stream backend
 | MIG-02 | V-MIG-01~02 |
 | VERIFY-01 | V-AWS-01~03, AWS에서의 V-FUNC·V-IDEM |
 | VERIFY-02 | V-AWS-04~06, V-PERF-01 |
+| OBS-01 | V-OBS-01~02 |
+| OBS-02 | V-OBS-03 |
+
+## 11. 관측 지표와 SLI
+
+OBS-01에서 정한 지표·SLI다. 대시보드 `<prefix>-service`와 Logs Insights 저장 쿼리 `<prefix>/api-sli-by-route`(경로별 요청 수·성공률·p50/p95), `<prefix>/request-trace`(요청 ID 추적)로 본다. 알람 대응은 [알람 대응](DEPLOYMENT.md#411-1-알람-대응-obs-02)을 따른다.
+
+| 신호 | 출처 | 용도 |
+| --- | --- | --- |
+| 경로별 요청 수·성공률·p50/p95 | backend 접근 로그(`event=http_request`, `route`·`status`·`durationMs`) | API별 SLI. 서버 처리 시간 |
+| 요청 수·5xx(target/ELB)·응답 시간 p50/p95/p99 | ALB(`AWS/ApplicationELB`) | 진입점 SLI. ELB 5xx는 target 없음·연결 오류 |
+| healthy/unhealthy target | ALB target group | 가용성 |
+| CPU·메모리, running/desired task | ECS, Container Insights | 용량·복구 |
+| ACU·연결 수 | Aurora(`AWS/RDS`) | DB 부하·일시정지 |
+| hit/miss·연결 수 | ElastiCache | 캐시 효과 |
+| 호출·오류·p95 | Lambda | 후처리 |
+
+로그 규칙: 요청마다 `X-Request-Id`를 받거나(8~64자 `[A-Za-z0-9._-]`) 만들어 응답 헤더로 돌려주고 같은 요청의 모든 로그에 `requestId`로 붙인다. 접근 로그는 메서드·경로 패턴(ID 제외)·상태·처리 시간만 남긴다. 요청 본문·쿼리 문자열·토큰·비밀번호·파일 내용은 남기지 않는다. AWS는 JSON(`ecs` 형식), 로컬·온프레미스는 텍스트 형식이다.
+
+SLI 정의(측정 근거는 작업일지, 아래 목표는 실습 환경 기준):
+
+| SLI | 대상 | 측정 | 목표(SLO) | 기간 |
+| --- | --- | --- | --- | --- |
+| 조회 가용성 | `GET /api/files`, `GET /api/files/{fileId}` | 접근 로그의 비 5xx 비율 + ALB ELB 5xx | 99% | 실습 세션 단위 |
+| 조회 지연 | 같은 경로 | 접근 로그 `durationMs` p95(서버 처리) | 200ms 이하 | 실습 세션 단위 |
+| 전송 가용성 | `POST /api/files`, `GET /api/files/{fileId}/download` | 접근 로그 비 5xx 비율 | 99% | 실습 세션 단위 |
+| 전송 지연 | 같은 경로, 10MB 이하 | `durationMs` p95 | 크기·클라이언트 대역폭에 좌우되므로 목표 없이 기록만 | - |
+
+- 목표값은 2026-11-20 측정값에 여유를 둔 값이다. 실습 계층은 하루 몇 시간만 떠 있으므로 이 수치를 장기 가용성 실적으로 표시하지 않는다.
+- 클라이언트가 보는 지연(로컬→us-east-1 왕복 약 0.4초 포함)은 서버 SLI와 섞지 않는다.
+
+### V-OBS-01 요청 ID 추적
+
+```bash
+RID="obs-$RUN_ID"
+curl -s -D - -o /dev/null -H "X-Request-Id: $RID" -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/files" | grep -i x-request-id
+# Logs Insights 저장 쿼리 <prefix>/request-trace에서 REPLACE_WITH_REQUEST_ID를 $RID로 바꿔 실행
+```
+
+판정: 응답 헤더가 보낸 값과 같고, 로그에서 같은 `requestId`의 접근 로그가 경로 패턴(`/api/files`)·상태·처리 시간과 함께 보인다. 토큰·본문은 로그에 없다.
+
+### V-OBS-02 경로별 SLI
+
+트래픽(V-FUNC·V-PERF)을 만든 뒤 `<prefix>/api-sli-by-route`를 실행한다.
+
+판정: 경로가 ID 없는 패턴으로 묶이고 요청 수·성공률·p50/p95가 나온다. 대시보드의 ALB·ECS·Aurora·Redis·Lambda 위젯에 값이 있다.
+
+### V-OBS-03 알람 발화·수신·복귀
+
+V-AWS-05(Lambda 실패)와 V-AWS-04(task 중지)를 실행한다.
+
+판정: `file-processor-errors`가 `ALARM` → 이메일 수신 → 오류가 멈추면 `OK` → 복귀 이메일 수신. task 중지 때 `alb-elb-5xx`(와 2분 넘게 중단되면 `alb-no-healthy-target`)가 같은 흐름을 따른다. 상태 이력은 `aws cloudwatch describe-alarm-history`로 남긴다.

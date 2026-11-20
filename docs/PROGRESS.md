@@ -19,9 +19,10 @@
 | 백엔드 자동 테스트 | 48개 통과 (H2 PostgreSQL 모드, 모의 Redis·S3, 응답 없는 Redis 포트, 실제 서블릿 multipart 한도) | [작업일지](worklogs/2026-11-17.md) |
 | 온프레미스 Compose 실행 | V-ONP·V-FUNC·V-DATA·V-IDEM·V-FAIL·V-ADMIN 통과. 실제 Redis에서 Lua 버전 비교 확인. 다중 backend 경합은 미수행 | [작업일지](worklogs/2026-11-17.md#온프레미스-구축과-검증) |
 | AWS 배포 전 로컬 검증 | V-LOC-01·02·03·05·06 통과. V-LOC-04는 실행 중 DB 멈춤(4-1)은 통과, 기동 중 DB 미가용(4-2)은 backend 종료(exit 1) → 배포 전 DB 깨우기로 대응(DEC-010) | [작업일지](worklogs/2026-11-19.md#v-loc-0205-실행) |
-| AWS 배포·비교·장애 복구 | 미수행 | PORT-01 이후 |
+| AWS 배포·비교·장애 복구 | MIG-02 배포·smoke, VERIFY-01·02 완료(2026-11-20) | [작업일지](worklogs/2026-11-20.md#1회차-자동-배포-첫-실행과-mig-02verify-01) |
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
+| AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일 수신은 사용자 확인 대기 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
 | GitHub Actions | actionlint, 로컬 Trivy(예외 2건 적용 후 0건), 테스트 48개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
@@ -35,6 +36,7 @@
 
 ## 최근 변경
 
+- 2026-11-20: 1·2회차 실행. 실습 계층 배포(MIG-02), 기능·계약 비교(VERIFY-01), 장애 주입·성능 smoke(VERIFY-02), 요청 ID·구조화 로그·대시보드·SLI(OBS-01), 알람 SNS 알림(OBS-02).
 - 2026-11-20: CD를 main push 자동 배포로 바꾸고 배포 role·ECR을 유지 계층으로 옮겼다(DEC-015). Trivy 실패 원인이던 의존성을 Spring Boot 3.5.16 등으로 올렸고, 남은 spring-webmvc 2건은 만료일 있는 예외로 두었다(SEC-02).
 - 2026-11-20: 부트캠프 계정 인증을 `aws login` + `credential_process`(`bootcamp-tf`)로 바꿨다(DEC-014). 장기 키가 삭제된 것을 확인했다.
 - 2026-11-20: SEC-01 구현·유지 계층 적용. DB 비밀번호(유지 계층)·JWT secret(실습 계층)을 Terraform ephemeral 값으로 만들어 write-only로 Aurora·SSM에 쓰고, ECS는 `secrets`로 읽는다. 두 tfvars의 비밀값 변수를 없앴다(DEC-013). 유지 계층 적용 완료, task 기동은 MIG-02.
