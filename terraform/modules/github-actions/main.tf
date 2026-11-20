@@ -136,6 +136,14 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["*"]
   }
 
+  # Smoke tests resolve the ALB DNS name (read only; Describe* has no
+  # resource-level permissions).
+  statement {
+    sid       = "AllowLoadBalancerRead"
+    actions   = ["elasticloadbalancing:DescribeLoadBalancers"]
+    resources = ["*"]
+  }
+
   statement {
     sid       = "AllowAuroraEvents"
     actions   = ["rds:DescribeEvents"]

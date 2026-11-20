@@ -138,6 +138,54 @@ resource "aws_sns_topic" "alarms" {
   tags = local.common_tags
 }
 
+# EventBridge (ECS deployment failures) may publish to the alarm topic too.
+data "aws_iam_policy_document" "alarms_topic" {
+  statement {
+    sid       = "AccountOwnerAndCloudWatch"
+    actions   = ["SNS:Publish", "SNS:Subscribe", "SNS:GetTopicAttributes", "SNS:SetTopicAttributes", "SNS:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.alarms.arn]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid       = "CloudWatchAlarms"
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alarms.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
+  statement {
+    sid       = "EventBridgeRules"
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alarms.arn]
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "alarms" {
+  arn    = aws_sns_topic.alarms.arn
+  policy = data.aws_iam_policy_document.alarms_topic.json
+}
+
 resource "aws_sns_topic_subscription" "alarm_email" {
   for_each = toset(var.budget_alert_emails)
 
