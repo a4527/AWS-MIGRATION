@@ -7,6 +7,11 @@ terraform {
       # seconds_until_auto_pause (Aurora scale to zero) needs 5.80 or later.
       version = ">= 5.80, < 6.0"
     }
+    random = {
+      source = "hashicorp/random"
+      # Ephemeral random_password needs 3.7 or later (SEC-01).
+      version = ">= 3.7, < 4.0"
+    }
   }
 }
 

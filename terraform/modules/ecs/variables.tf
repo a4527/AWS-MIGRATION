@@ -123,10 +123,9 @@ variable "database_username" {
   type        = string
 }
 
-variable "database_password" {
-  description = "Database password used by the application."
+variable "database_password_parameter_arn" {
+  description = "ARN of the SSM SecureString parameter holding the database password."
   type        = string
-  sensitive   = true
 }
 
 variable "redis_host" {
@@ -134,10 +133,9 @@ variable "redis_host" {
   type        = string
 }
 
-variable "app_jwt_secret" {
-  description = "JWT secret passed to the application."
+variable "app_jwt_secret_parameter_arn" {
+  description = "ARN of the SSM SecureString parameter holding the JWT secret."
   type        = string
-  sensitive   = true
 }
 
 variable "app_policy_arns" {

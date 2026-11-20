@@ -20,21 +20,24 @@ resource "aws_security_group" "this" {
 }
 
 resource "aws_rds_cluster" "this" {
-  cluster_identifier        = "${var.name_prefix}-aurora"
-  engine                    = "aurora-postgresql"
-  engine_mode               = "provisioned"
-  engine_version            = var.engine_version
-  database_name             = var.database_name
-  master_username           = var.master_username
-  master_password           = var.master_password
-  db_subnet_group_name      = aws_db_subnet_group.this.name
-  vpc_security_group_ids    = [aws_security_group.this.id]
-  storage_encrypted         = true
-  copy_tags_to_snapshot     = true
-  backup_retention_period   = 1
-  deletion_protection       = var.deletion_protection
-  skip_final_snapshot       = var.skip_final_snapshot
-  final_snapshot_identifier = var.skip_final_snapshot ? null : "${var.name_prefix}-aurora-final"
+  cluster_identifier = "${var.name_prefix}-aurora"
+  engine             = "aurora-postgresql"
+  engine_mode        = "provisioned"
+  engine_version     = var.engine_version
+  database_name      = var.database_name
+  master_username    = var.master_username
+  # Write-only: the value never reaches state or plan. It is sent only when
+  # master_password_wo_version changes (SEC-01).
+  master_password_wo         = var.master_password_wo
+  master_password_wo_version = var.master_password_wo_version
+  db_subnet_group_name       = aws_db_subnet_group.this.name
+  vpc_security_group_ids     = [aws_security_group.this.id]
+  storage_encrypted          = true
+  copy_tags_to_snapshot      = true
+  backup_retention_period    = 1
+  deletion_protection        = var.deletion_protection
+  skip_final_snapshot        = var.skip_final_snapshot
+  final_snapshot_identifier  = var.skip_final_snapshot ? null : "${var.name_prefix}-aurora-final"
 
   serverlessv2_scaling_configuration {
     min_capacity = var.min_capacity

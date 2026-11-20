@@ -10,6 +10,11 @@ terraform {
       source  = "hashicorp/archive"
       version = "~> 2.4"
     }
+    random = {
+      source = "hashicorp/random"
+      # Ephemeral random_password needs 3.7 or later (SEC-01).
+      version = ">= 3.7, < 4.0"
+    }
   }
 }
 

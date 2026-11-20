@@ -151,10 +151,10 @@ variable "file_processor_duration_alarm_threshold_ms" {
   default     = 10000
 }
 
-variable "app_jwt_secret" {
-  description = "JWT secret used by the backend application."
-  type        = string
-  sensitive   = true
+variable "app_jwt_secret_version" {
+  description = "Increase to generate a new JWT secret in SSM. Running tasks keep the old value until a new deployment (SEC-01)."
+  type        = number
+  default     = 1
 }
 
 variable "github_repository" {
@@ -172,12 +172,6 @@ variable "github_oidc_thumbprints" {
   description = "Thumbprints for the GitHub Actions OIDC provider."
   type        = list(string)
   default     = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-}
-
-variable "aurora_master_password" {
-  description = "Aurora master password set in the data layer. Injected into ECS until SEC-01."
-  type        = string
-  sensitive   = true
 }
 
 variable "redis_node_type" {

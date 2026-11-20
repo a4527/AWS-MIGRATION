@@ -4,10 +4,12 @@ owner        = "replace-with-owner-id"
 project_name = "fileshare"
 environment  = "dev"
 
-# Apply ../dev-data first. These values must match ../dev-data/terraform.tfvars.
-file_bucket_name       = "replace-with-globally-unique-fileshare-dev-bucket"
-aurora_master_password = "replace-with-strong-development-password"
-app_jwt_secret         = "replace-with-strong-development-jwt-secret"
+# Apply ../dev-data first. This value must match ../dev-data/terraform.tfvars.
+file_bucket_name = "replace-with-globally-unique-fileshare-dev-bucket"
+
+# The DB password comes from the SSM parameter that ../dev-data creates, and the
+# JWT secret is generated into SSM here (SEC-01). Increase to rotate the JWT secret.
+app_jwt_secret_version = 1
 
 github_repository = "replace-with-github-owner/aws-migration-project"
 github_branch     = "main"

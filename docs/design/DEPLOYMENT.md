@@ -129,7 +129,7 @@ S3_BUCKET=<terraform-output-file-bucket-name>
 S3_OBJECT_PREFIX=files/
 ```
 
-현재 Terraform은 DB 비밀번호·JWT secret을 task definition 일반 환경변수로 주입한다. Secrets Manager 전환은 SEC-01 범위다.
+`DB_PASSWORD`·`APP_JWT_SECRET`은 일반 환경변수가 아니라 task definition `secrets`로 주입한다. 값은 SSM Parameter Store SecureString에 있고 task definition에는 parameter ARN만 있다. ECS execution role이 task 시작 때 값을 읽는다([DEC-013](../DECISIONS.md#결정-목록), [비밀값 관리](#42-1-비밀값-관리-sec-01)).
 
 ## 4. AWS 배포
 
@@ -139,12 +139,12 @@ Terraform은 유지 계층(`dev-data`: VPC·S3·Aurora)과 실습 계층(`dev`: 
 
 ### 4.0 사전 준비
 
-PORT-01에서 정한 실행 조건([DEC-006](../DECISIONS.md#결정-목록)):
+PORT-01에서 정한 실행 조건([DEC-006](../DECISIONS.md#결정-목록), 인증은 [DEC-014](../DECISIONS.md#결정-목록)):
 
 | 항목 | 값 |
 | --- | --- |
 | 리전 | `us-east-1` (AZ `us-east-1a`, `us-east-1b`) |
-| 인증 | IAM user access key(`aws configure`). 키는 `~/.aws/credentials`에만 두고 저장소·문서·tfvars에 넣지 않는다. 계정은 조직의 연결 계정(linked account)이라 비용 할당 태그 조회 권한이 없다 |
+| 인증 | IAM user 콘솔 자격 증명으로 `aws login`(프로필 `bootcamp`). 장기 access key는 쓰지 않는다. 계정 정리 정책이 장기 키를 지운다(2026-11-20 확인). Terraform은 `credential_process` 프로필(`bootcamp-tf`)로 같은 세션을 쓴다. 계정은 조직의 연결 계정(linked account)이라 비용 할당 태그 조회 권한이 없다 |
 | 실습 데이터 | 검증 시나리오로 새로 만든 데이터만 쓴다. 온프레미스 데이터는 옮기지 않는다([DEC-007](../DECISIONS.md#결정-목록)) |
 | 보존·삭제 범위 | 유지: S3 file bucket, Aurora(0 ACU 자동 일시정지), VPC. 실습마다 삭제: `dev` 계층 전체 |
 | 실험 중단 조건 | 실습 종료, 예산 알림 수신, 원인 모를 비용 증가 시 `dev` 계층을 바로 destroy한다 |
@@ -173,19 +173,23 @@ https://github.com/<owner>/aws-migration-project
 
 로컬 터미널에서 AWS에 로그인한다.
 
-Access key 방식(기본):
+`aws login` 방식([DEC-014](../DECISIONS.md#결정-목록)). IAM user에 `SignInLocalDevelopmentAccess` 권한이 필요하고, AWS CLI 2.32 이상에서 쓸 수 있다. `~/.aws/config`에 다음 두 프로필을 둔다. `bootcamp`의 `login_session`은 처음 로그인할 때 CLI가 채운다.
 
-```bash
-aws configure              # Default region name: us-east-1, output: json
+```ini
+[profile bootcamp]
+region = us-east-1
+
+[profile bootcamp-tf]
+credential_process = /home/<user>/.local/bin/aws configure export-credentials --profile bootcamp --format process
+region = us-east-1
 ```
 
-SSO 방식(선택):
-
 ```bash
-aws configure sso
-aws sso login --profile <profile>
-export AWS_PROFILE=<profile>
+aws login --profile bootcamp     # WSL에서는 출력된 URL을 Windows 브라우저에서 연다
+export AWS_PROFILE=bootcamp-tf   # 이 셸의 aws CLI·Terraform이 모두 이 세션을 쓴다
 ```
+
+aws provider 5.x는 `login_session`을 직접 읽지 못해 `credential_process`로 감싼다. 세션이 만료되면 `aws login --profile bootcamp`만 다시 하면 된다. 개인 백업 계정(`personal`)과 동시에 로그인해 둘 수 있고, 브라우저가 다른 계정에 로그인돼 있으면 시크릿 창에서 URL을 연다.
 
 현재 로그인된 AWS 계정을 확인한다.
 
@@ -218,7 +222,7 @@ cp backend.hcl.example backend.hcl      # bucket = "<state_bucket_name>"
 terraform init -backend-config=backend.hcl
 ```
 
-로컬 state가 이미 있는 계층은 `terraform init -migrate-state -backend-config=backend.hcl`로 옮긴다. 옮긴 뒤 `terraform state pull`의 리소스가 원본과 같은지, `terraform plan`이 변경 없음인지 확인하고 로컬 사본을 정리한다. 로컬 사본과 원격 state에는 비밀값이 평문으로 있다(SEC-01 전까지).
+로컬 state가 이미 있는 계층은 `terraform init -migrate-state -backend-config=backend.hcl`로 옮긴다. 옮긴 뒤 `terraform state pull`의 리소스가 원본과 같은지, `terraform plan`이 변경 없음인지 확인하고 로컬 사본을 정리한다. SEC-01 이전에 만든 로컬 사본과 원격 state의 이전 버전에는 당시 DB 비밀번호가 평문으로 있다. SEC-01 적용 때 비밀번호를 새 값으로 교체했으므로 그 값으로는 접속할 수 없다.
 
 state 문제 대응:
 
@@ -253,13 +257,12 @@ cp terraform.tfvars.example terraform.tfvars
 `dev-data/terraform.tfvars`에서 최소 다음 값을 수정한다.
 
 ```hcl
-owner                  = "<Owner 태그 값>"
-file_bucket_name       = "replace-with-globally-unique-bucket-name"
-aurora_master_password = "replace-with-strong-development-password"
-budget_alert_emails    = ["<알림 받을 주소>"]
+owner               = "<Owner 태그 값>"
+file_bucket_name    = "replace-with-globally-unique-bucket-name"
+budget_alert_emails = ["<알림 받을 주소>"]
 ```
 
-기본값은 Aurora 최소 0 ACU·300초 뒤 자동 일시정지, 삭제 보호 켜짐, 최종 스냅샷 남김이다.
+DB 비밀번호는 넣지 않는다. apply 때 Terraform이 만들어 Aurora와 SSM에 쓴다([4.2-1](#42-1-비밀값-관리-sec-01)). 기본값은 Aurora 최소 0 ACU·300초 뒤 자동 일시정지, 삭제 보호 켜짐, 최종 스냅샷 남김이다.
 
 실습 계층 변수 파일을 만든다.
 
@@ -268,13 +271,11 @@ cd terraform/environments/dev
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-`dev/terraform.tfvars`에서 최소 다음 값을 수정한다. `file_bucket_name`과 `aurora_master_password`는 유지 계층과 같은 값이어야 한다.
+`dev/terraform.tfvars`에서 최소 다음 값을 수정한다. `file_bucket_name`은 유지 계층과 같은 값이어야 한다. DB 비밀번호와 JWT secret은 넣지 않는다.
 
 ```hcl
-owner                  = "same-as-dev-data"
-file_bucket_name       = "same-as-dev-data"
-aurora_master_password = "same-as-dev-data"
-app_jwt_secret         = "replace-with-strong-development-jwt-secret"
+owner             = "same-as-dev-data"
+file_bucket_name  = "same-as-dev-data"
 
 github_repository = "<github-owner>/aws-migration-project"
 github_branch     = "main"
@@ -283,6 +284,38 @@ ecs_desired_count = 1
 ```
 
 `file_bucket_name`은 전 세계에서 유일해야 한다.
+
+### 4.2-1 비밀값 관리 (SEC-01)
+
+결정: [DEC-013](../DECISIONS.md#결정-목록). 값은 tfvars·state·plan에 없다. Terraform은 apply 중에 ephemeral `random_password`로 값을 만들고 write-only 인자(`master_password_wo`, `value_wo`)로만 보낸다. 두 값 모두 AWS 관리 키 `aws/ssm`으로 암호화한다.
+
+| 값 | SSM parameter | 만드는 계층 | 교체 |
+| --- | --- | --- | --- |
+| Aurora master password | `/<project>/<environment>/aurora/master-password` | `dev-data` (Aurora와 같은 apply) | `aurora_master_password_version` 증가 |
+| JWT secret | `/<project>/<environment>/app/jwt-secret` | `dev` (실습 계층과 함께 생성·삭제) | `app_jwt_secret_version` 증가 |
+
+- write-only 값은 `*_version`이 바뀔 때만 다시 보낸다. 버전을 그대로 두면 apply를 반복해도 값이 바뀌지 않는다.
+- 실습 계층은 DB 비밀번호 parameter를 data source로 읽지 않고 이름으로 ARN을 만든다. `data "aws_ssm_parameter"`는 값을 state에 저장하기 때문이다.
+- ECS execution role은 이 두 parameter에만 `ssm:GetParameters`를 가진다. task role(애플리케이션)과 GitHub Actions 배포 role에는 SSM 권한이 없다.
+- 실행 중인 task는 시작할 때 읽은 값을 계속 쓴다. 교체한 뒤에는 새 배포로 task를 바꾼다.
+
+DB 비밀번호 교체:
+
+```bash
+cd terraform/environments/dev-data
+terraform apply -var aurora_master_password_version=<현재+1>   # 또는 tfvars에 기록
+# 실습 계층이 떠 있으면 바로 task를 교체한다. 기존 연결이 끊기면 이전 비밀번호로는 다시 연결하지 못한다.
+aws ecs update-service --cluster <cluster> --service <service> --force-new-deployment
+```
+
+값이 필요하면(`pg_dump`·수동 점검) SSM에서 읽고 화면·로그·파일에 남기지 않는다.
+
+```bash
+aws ssm get-parameter --name "$(terraform output -raw aurora_master_password_parameter_name)" \
+  --with-decryption --query Parameter.Value --output text
+```
+
+apply 중 SSM과 Aurora 중 한쪽만 바뀌면 값이 어긋날 수 있다. 버전을 한 번 더 올려 두 곳에 같은 새 값을 다시 쓴다.
 
 1 task 실습 구성은 `ecs_desired_count = 1`과 `ecs_min_capacity = 1`을 함께 설정한다. 생성 후 task 수는 Auto Scaling이 관리한다.
 
@@ -456,7 +489,7 @@ aws rds describe-events --source-type db-instance --source-identifier "$WRITER" 
   --query 'Events[].[Date,Message]' --output text
 ```
 
-판정: 마지막 이벤트 목록에 재개 시작·완료 이벤트가 보이거나, 이미 실행 중이어서 재개 이벤트가 없다. 정확한 이벤트 문구와 로그 조회만으로 재개되는지는 첫 실행(MIG-02)에서 확인해 여기에 고친다. 자동 일시정지는 300초 동안 연결이 없으면 다시 걸리므로, workflow를 시작할 때가 아니라 `ECS service rolling deployment` 단계에 들어갈 때 깨운다(테스트·빌드·검사가 5분을 넘을 수 있다). 깨우기를 빠뜨려 첫 task가 실패해도 그 연결 시도가 재개를 일으키므로 ECS가 띄우는 다음 task는 성공할 것으로 예상한다(미확인). 이 경우 실패 task를 작업일지에 기록한다.
+판정: 마지막 이벤트 목록에 재개 시작·완료 이벤트(`Initiated resume for the DB instance ...`, `Successfully resumed the DB instance ...`)가 보이거나, 이미 실행 중이어서 재개 이벤트가 없다. 이벤트 문구와 재개 소요(약 12초)는 2026-11-20 SEC-01 apply 때 관찰했다([작업일지](../worklogs/2026-11-20.md#aws-적용)). 로그 조회만으로 재개되는지는 첫 실행(MIG-02)에서 확인해 여기에 고친다. 자동 일시정지는 300초 동안 연결이 없으면 다시 걸리므로, workflow를 시작할 때가 아니라 `ECS service rolling deployment` 단계에 들어갈 때 깨운다(테스트·빌드·검사가 5분을 넘을 수 있다). 깨우기를 빠뜨려 첫 task가 실패해도 그 연결 시도가 재개를 일으키므로 ECS가 띄우는 다음 task는 성공할 것으로 예상한다(미확인). 이 경우 실패 task를 작업일지에 기록한다.
 
 ### 4.7 AWS 콘솔 확인
 
@@ -892,7 +925,7 @@ CPU·메모리·환경변수·role 등 task definition 설정을 바꿀 때는 T
 
 1. Terraform과 CD의 동시 변경을 멈추고 현재 service revision·backend image URI/digest를 기록한다. 정상 revision은 롤백 대상으로 보존한다.
 2. `terraform output -raw ecs_task_definition_template_arn`으로 정확한 템플릿 ARN을 얻는다. Family의 latest revision은 CD가 만든 revision일 수 있으므로 대신 사용하지 않는다.
-3. 해당 ARN의 task definition을 조회해 등록 가능한 필드만 사용하고 backend image를 현재 검증된 이미지로 교체한다. 새 revision을 등록하고 설정 차이를 검토한 뒤 service에 명시적으로 배포한다. 현재 일반 환경변수에 비밀값이 있으므로 JSON 원문을 로그·artifact·문서에 남기지 않는다. 비밀값 주입 개선은 SEC-01에서 추적한다.
+3. 해당 ARN의 task definition을 조회해 등록 가능한 필드만 사용하고 backend image를 현재 검증된 이미지로 교체한다. 새 revision을 등록하고 설정 차이를 검토한 뒤 service에 명시적으로 배포한다. 비밀값은 `secrets`의 SSM ARN으로만 들어 있지만, 내부 endpoint 등 구성 정보가 있으므로 JSON 원문을 artifact·문서에 남기지 않는다.
 4. 안정화·health·기능 smoke를 확인하고 실패하면 보존한 정상 revision으로 service를 되돌린다. 이 수동 설정 배포·롤백은 CICD-02/03의 자동화·실행 검증 완료를 뜻하지 않는다.
 
 실습 계층(`dev`)을 destroy했다가 다시 apply하면 ECR·ECS service가 새로 만들어지므로([DEC-008](../DECISIONS.md#결정-목록)) 매번 위 최초 배포 순서를 따른다. 이전 실습의 revision·task 수는 이어지지 않는다.

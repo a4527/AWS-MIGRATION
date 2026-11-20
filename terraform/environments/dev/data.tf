@@ -58,6 +58,10 @@ data "aws_rds_cluster" "this" {
   cluster_identifier = "${local.name_prefix}-aurora"
 }
 
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
 data "aws_s3_bucket" "files" {
   bucket = var.file_bucket_name
 }
@@ -67,4 +71,16 @@ locals {
   public_subnet_ids   = sort(data.aws_subnets.public.ids)
   private_subnet_ids  = sort(data.aws_subnets.private.ids)
   database_subnet_ids = sort(data.aws_subnets.database.ids)
+
+  # SEC-01: the data layer stores the Aurora master password in this SSM
+  # parameter. The ARN is built from the name instead of read with a data
+  # source, because data "aws_ssm_parameter" would copy the value into state.
+  aurora_master_password_parameter_arn = format(
+    "arn:%s:ssm:%s:%s:parameter/%s/%s/aurora/master-password",
+    data.aws_partition.current.partition,
+    var.aws_region,
+    data.aws_caller_identity.current.account_id,
+    var.project_name,
+    var.environment,
+  )
 }

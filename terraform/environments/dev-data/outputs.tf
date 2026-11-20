@@ -38,6 +38,11 @@ output "aurora_cluster_endpoint" {
   value       = module.aurora.cluster_endpoint
 }
 
+output "aurora_master_password_parameter_name" {
+  description = "SSM SecureString parameter that holds the Aurora master password (value not in state)."
+  value       = aws_ssm_parameter.aurora_master_password.name
+}
+
 output "aurora_security_group_id" {
   description = "Aurora security group ID."
   value       = module.aurora.security_group_id

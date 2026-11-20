@@ -166,11 +166,11 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 ## AWS 명령이 InvalidClientTokenId로 실패함
 
 - 증상: `terraform plan`이나 `aws sts get-caller-identity`가 `403 InvalidClientTokenId: The security token included in the request is invalid`로 실패한다.
-- 원인: 설정된 access key가 더 이상 유효하지 않다(비활성화·삭제·교체). 2026-11-19에는 전날 성공한 장기 키가 거부됐고 정확한 원인은 확인하지 못했다. 세션 토큰이 있는 임시 자격 증명이면 만료(`ExpiredToken`)일 수도 있다.
+- 원인: 설정된 access key가 더 이상 유효하지 않다(비활성화·삭제·교체). 2026-11-19에는 전날 성공한 장기 키가 거부됐고 원인을 확인하지 못했다. 2026-11-20에 다시 거부됐을 때는 `aws sts get-access-key-info`로 부트캠프 계정의 키임을 확인했고, `iam list-access-keys` 결과 user에 키가 하나도 없었다. 키가 삭제된 것이다. 계정 정리 정책이 지운 것으로 추정한다. 세션 토큰이 있는 임시 자격 증명이면 만료(`ExpiredToken`)일 수도 있다.
 - 해결 방법:
   - `env | grep ^AWS_`로 파일 설정을 덮어쓰는 환경변수가 없는지 본다.
-  - IAM 콘솔에서 사용자와 키 상태를 확인하고 새 키를 만들어 `aws configure`로 넣는다. 키 값은 저장소·문서·대화에 남기지 않는다.
-- 재검증 방법·결과: `aws sts get-caller-identity` 성공 뒤 `terraform plan`이 진행됨([작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01)).
+  - 장기 키 대신 `aws login`으로 바꾼다([DEC-014](DECISIONS.md#결정-목록), [로그인 절차](design/DEPLOYMENT.md#41-aws-로그인-확인)). `~/.aws/credentials`에 남은 키는 지운다. 남겨 두면 프로필을 지정하지 않은 명령이 계속 이 키로 실패한다.
+- 재검증 방법·결과: `aws sts get-caller-identity` 성공 뒤 `terraform plan`이 진행됨([2026-11-19](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-20](worklogs/2026-11-20.md#aws-적용)).
 - 재발 방지 체크리스트:
   - AWS 작업 시작 전에 `aws sts get-caller-identity`부터 확인한다.
 

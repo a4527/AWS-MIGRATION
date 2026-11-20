@@ -105,7 +105,7 @@ terraform/
 - 실습 계층은 유지 계층 리소스를 state가 아니라 이름·태그로 조회한다(`dev/data.tf`). 그래서 IAC-01에서 backend를 S3로 바꿨어도 계층 간 연결은 그대로다. state는 `terraform/bootstrap`이 만든 bucket에 계층별 key로 있고 S3 자체 잠금을 쓴다([DEC-011](../DECISIONS.md#결정-목록)).
 - 승인된 미구현: 공유 계정 정리 정책에 대비해 유지 계층의 S3 객체와 DB dump를 개인 AWS 계정으로 교차 계정 복제한다. 실행 중 교차 계정 접근은 없다([DEC-012](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), BACKUP-01). 대신 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
 - 계층에 걸친 연결은 실습 계층이 만들고 지운다: NAT 경로(`aws_route`)는 유지 계층의 private route table에, `5432 from Application SG` 규칙은 유지 계층의 Aurora SG에 붙는다. 실습 계층을 지우면 Aurora로 들어오는 규칙이 없어진다.
-- Aurora 비밀번호는 SEC-01 전까지 두 계층의 `terraform.tfvars`에 같은 값으로 둔다.
+- Aurora 비밀번호는 유지 계층이 만들어 SSM SecureString에 두고, 실습 계층은 parameter ARN만 task definition에 넣는다(SEC-01, [DEC-013](../DECISIONS.md#결정-목록)). JWT secret parameter는 실습 계층이 만들고 지운다.
 - 순서: 생성은 `dev-data` → `dev`, 삭제는 `dev`만. 유지 계층을 지우려면 `aurora_deletion_protection = false`를 먼저 apply하고, 기본값으로 최종 스냅샷(`<prefix>-aurora-final`)을 남긴다.
 
 ## 루트 모듈 역할
@@ -1139,11 +1139,16 @@ S3_BUCKET=<s3_bucket_name>
 S3_OBJECT_PREFIX=<file_object_prefix>
 DB_URL=jdbc:postgresql://<aurora-endpoint>:5432/<database>
 DB_USERNAME=<aurora_master_username>
-DB_PASSWORD=<aurora_master_password>
 REDIS_HOST=<elasticache-primary-endpoint>
 REDIS_PORT=6379
 REDIS_SSL_ENABLED=true
-APP_JWT_SECRET=<app_jwt_secret>
+```
+
+다음 두 값은 `secrets`(SSM parameter ARN)로 주입한다.
+
+```text
+DB_PASSWORD     <- /<project>/<environment>/aurora/master-password
+APP_JWT_SECRET  <- /<project>/<environment>/app/jwt-secret
 ```
 
 `REDIS_SSL_ENABLED=true`인 이유는 ElastiCache 모듈에서 transit encryption을 켜기 때문이다.
@@ -1154,18 +1159,13 @@ transit_encryption_enabled = true
 
 ## Secret 처리 기준
 
-현재 개발 Terraform은 `DB_PASSWORD`와 `APP_JWT_SECRET`을 task definition 환경변수로 넣는다.
+SEC-01([DEC-013](../DECISIONS.md#결정-목록))로 다음과 같이 구현했다. 절차는 [비밀값 관리](DEPLOYMENT.md#42-1-비밀값-관리-sec-01)에 있다.
 
-이 방식은 학습과 개발 환경에서는 단순하지만 운영에서는 개선이 필요하다.
-
-운영 기준에서는 다음 방식이 더 적합하다.
-
-- Aurora password는 AWS Secrets Manager에 저장한다.
-- JWT secret도 AWS Secrets Manager 또는 SSM Parameter Store에 저장한다.
-- ECS task definition의 `secrets` 블록으로 주입한다.
-- Terraform state에 평문 secret이 남지 않게 설계한다.
-
-현재 변수에는 `sensitive = true`가 붙어 있지만, Terraform state에는 값이 저장될 수 있다. 따라서 실서비스 기준에서는 secret manager 연동이 필요하다.
+- 저장소: SSM Parameter Store SecureString(Standard tier, AWS 관리 키 `aws/ssm`). Secrets Manager(비밀당 월 $0.40)와 RDS 관리 비밀번호는 쓰지 않는다.
+- 생성: Terraform ephemeral `random_password`. Aurora `master_password_wo`, SSM `value_wo` 같은 write-only 인자로만 전달해 tfvars·state·plan에 값이 없다. `sensitive = true`는 화면 표시만 가리고 state에는 값을 남기므로 쓰지 않았다.
+- 주입: task definition `secrets`. task definition·CD workflow가 복제하는 JSON에는 ARN만 있다.
+- 권한: ECS execution role만 두 parameter에 `ssm:GetParameters`. task role·Lambda·GitHub Actions role은 SSM을 읽지 못한다.
+- 한계: 자동 교체(rotation)는 없다. 버전 변수를 올려 수동으로 교체하고 task를 새로 배포한다. SEC-01 이전 state 버전에는 예전 비밀번호가 평문으로 남아 있지만 적용 때 교체해서 쓸 수 없다.
 
 ## Aurora 모듈
 
@@ -1291,7 +1291,7 @@ file_bucket_name
 force_destroy_buckets
 aurora_database_name
 aurora_master_username
-aurora_master_password
+aurora_master_password_version
 aurora_engine_version
 aurora_instance_count
 aurora_min_capacity
@@ -1315,11 +1315,10 @@ ecs_task_cpu
 ecs_task_memory
 ecs_desired_count
 ecs_health_check_path
-app_jwt_secret
+app_jwt_secret_version
 github_repository
 github_branch
 github_oidc_thumbprints
-aurora_master_password
 redis_node_type
 redis_num_cache_clusters
 tags
@@ -1330,12 +1329,10 @@ tags
 최소로 바꿔야 하는 값은 다음이다.
 
 ```hcl
-file_bucket_name       = "replace-with-globally-unique-fileshare-dev-bucket"
-aurora_master_password = "replace-with-strong-development-password"
-app_jwt_secret         = "replace-with-strong-development-jwt-secret"
+file_bucket_name = "replace-with-globally-unique-fileshare-dev-bucket"
 ```
 
-S3 bucket 이름은 전 세계에서 유일해야 한다. `file_bucket_name`과 `aurora_master_password`는 두 계층에서 같은 값을 쓴다.
+S3 bucket 이름은 전 세계에서 유일해야 한다. `file_bucket_name`은 두 계층에서 같은 값을 쓴다. 비밀값은 tfvars에 넣지 않는다(SEC-01).
 
 ## Terraform Output
 
@@ -1430,8 +1427,7 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 `terraform apply` 전 확인해야 할 항목은 다음과 같다.
 
 - `terraform.tfvars`의 S3 bucket 이름이 전역 유일한가
-- `aurora_master_password`가 충분히 강한 값인가
-- `app_jwt_secret`이 충분히 긴 랜덤 값인가
+- `terraform.tfvars`에 비밀값이 없는가(SEC-01 이후 비밀값 변수는 없다)
 - AWS credentials가 올바른 계정과 리전을 가리키는가
 - ECR image tag가 실제 push된 tag와 일치하는가
 - 예상 비용을 확인했는가
@@ -1488,7 +1484,6 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 
 후속 보강할 보안 항목은 다음이다.
 
-- Secrets Manager 기반 secret 주입
 - VPC endpoint로 S3/ECR/CloudWatch 접근 최적화
 - ALB access log 활성화
 - WAF 적용 검토
@@ -1525,14 +1520,14 @@ ALB target health
 
 아직 후속으로 보강해야 할 항목은 다음이다.
 
-- Secrets Manager 연동
+- 비밀값 자동 교체(rotation) 없음. SSM parameter 버전을 올려 수동 교체한다
 - ALB access log
 - WAF
 - VPC endpoint
 - 실제 바이러스 검사 엔진 연동
 - Lambda 후처리 결과와 DB 상태 동기화
 - 로컬에서 Aurora에 접근하는 경로가 없다. MIG-01에서 데이터 이전을 하지 않기로 해서([DEC-007](../DECISIONS.md#결정-목록)) 만들지 않았다. DB를 직접 조회해야 하면 ECS task나 별도 경로를 추가로 정한다.
-- 계층 간 값(bucket 이름·DB 비밀번호)을 두 tfvars에 중복해서 둔다. 비밀번호 중복은 SEC-01에서 Secrets Manager 참조로 없앤다.
+- 계층 간 값 중 bucket 이름은 두 tfvars에 중복해서 둔다. DB 비밀번호 중복은 SEC-01에서 SSM parameter 참조로 없앴다.
 
 ## 최종 요약
 
@@ -1549,4 +1544,4 @@ ALB target health
 - Terraform 루트 모듈은 `terraform/environments/dev`이다.
 - `terraform.tfvars`는 변수 값만 공급하고, 실제 리소스 구조는 `.tf` 파일과 모듈들이 결정한다.
 
-이 구조를 기준으로 다음 단계에서는 Secrets Manager, VPC endpoint, ALB access log, WAF, 실제 바이러스 검사와 DB 상태 동기화를 보강하면 된다.
+이 구조를 기준으로 다음 단계에서는 VPC endpoint, ALB access log, WAF, 실제 바이러스 검사와 DB 상태 동기화를 보강하면 된다.

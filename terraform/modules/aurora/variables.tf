@@ -23,10 +23,16 @@ variable "master_username" {
   type        = string
 }
 
-variable "master_password" {
-  description = "Aurora master password."
+variable "master_password_wo" {
+  description = "Aurora master password, write-only. Pass an ephemeral value."
   type        = string
   sensitive   = true
+  ephemeral   = true
+}
+
+variable "master_password_wo_version" {
+  description = "Increase to send master_password_wo to Aurora again (rotation)."
+  type        = number
 }
 
 variable "engine_version" {

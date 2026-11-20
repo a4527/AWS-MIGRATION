@@ -79,10 +79,10 @@ variable "aurora_master_username" {
   default     = "fileshare"
 }
 
-variable "aurora_master_password" {
-  description = "Aurora master password. Must match the application layer until SEC-01."
-  type        = string
-  sensitive   = true
+variable "aurora_master_password_version" {
+  description = "Increase to generate a new Aurora master password and write it to Aurora and SSM (SEC-01)."
+  type        = number
+  default     = 1
 }
 
 variable "aurora_engine_version" {

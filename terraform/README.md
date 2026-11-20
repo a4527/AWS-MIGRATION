@@ -86,7 +86,7 @@ terraform destroy                       # 실습 종료 시 dev만
 
 ## 변수 체계
 
-유지 계층(`dev-data`)만 쓰는 변수: `vpc_cidr`, `availability_zones`, subnet CIDR, `force_destroy_buckets`, `aurora_*`(단, `aurora_master_password`는 두 계층 모두). 실습 계층은 bucket·Aurora를 이름으로 조회한다.
+유지 계층(`dev-data`)만 쓰는 변수: `vpc_cidr`, `availability_zones`, subnet CIDR, `force_destroy_buckets`, `aurora_*`. 실습 계층은 bucket·Aurora를 이름으로 조회한다.
 
 - `aws_region`: 배포 리전. 기본값은 `us-east-1`
 - `project_name`: 리소스 이름 prefix
@@ -104,10 +104,12 @@ terraform destroy                       # 실습 종료 시 dev만
 - `ecs_task_cpu`: Fargate task CPU units
 - `ecs_task_memory`: Fargate task memory
 - `ecs_desired_count`: ECS service 생성 시 task 수. 생성 후에는 Auto Scaling이 관리
-- `app_jwt_secret`: AWS 실행 환경의 JWT secret
+- `app_jwt_secret_version`: 실습 계층. 올리면 JWT secret을 새로 만들어 SSM에 쓴다
 - `github_repository`: GitHub Actions OIDC assume을 허용할 repository
 - `github_branch`: GitHub Actions OIDC assume을 허용할 branch
-- `aurora_master_password`: Aurora master password. 두 계층에 같은 값을 둔다. 실제 값은 `terraform.tfvars` 또는 secret store에서 주입한다.
+- `aurora_master_password_version`: 유지 계층. 올리면 Aurora 비밀번호를 새로 만들어 Aurora와 SSM에 쓴다
+
+비밀값은 tfvars에 넣지 않는다. Terraform이 apply 중에 만들어 write-only 인자로 Aurora·SSM에만 보내고, ECS는 `secrets`로 SSM에서 읽는다([비밀값 관리](../docs/design/DEPLOYMENT.md#42-1-비밀값-관리-sec-01), [DEC-013](../docs/DECISIONS.md#결정-목록)).
 - `redis_node_type`: ElastiCache Redis node type
 
 ECS service의 배포 revision은 CD, 실행 task 수는 Auto Scaling이 관리한다. Terraform의 템플릿 변경은 기존 service에 자동 배포되지 않는다. 최초 배포·설정 변경·재생성 절차와 검증은 [관리 책임과 배포 순서](../docs/design/DEPLOYMENT.md#ecs-관리-책임과-배포-순서-iac-02)를 따른다.
