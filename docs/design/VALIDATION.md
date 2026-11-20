@@ -650,6 +650,12 @@ docker stats --no-stream backend
 | VERIFY-02 | V-AWS-04~06, V-PERF-01 |
 | OBS-01 | V-OBS-01~02 |
 | OBS-02 | V-OBS-03 |
+| OPS-01 | V-OPS-01~05 |
+| OPS-02 | V-BAK-01~02 |
+| FILE-03 | V-SCAN-01~05 |
+| CICD-02/03 | V-CICD-01~03 |
+| IAC-03 | V-IAC-01~03 |
+| PERF-01 | V-PERF-03 |
 
 ## 11. 관측 지표와 SLI
 
@@ -711,3 +717,52 @@ curl -s -D - -o /dev/null -H "X-Request-Id: $RID" -H "Authorization: Bearer $TOK
 V-AWS-05(Lambda 실패)와 V-AWS-04(task 중지)를 실행한다.
 
 판정: `file-processor-errors`가 `ALARM` → 이메일 수신 → 오류가 멈추면 `OK` → 복귀 이메일 수신. task 중지 때 `alb-elb-5xx`(와 2분 넘게 중단되면 `alb-no-healthy-target`)가 같은 흐름을 따른다. 상태 이력은 `aws cloudwatch describe-alarm-history`로 남긴다.
+
+## 12. 운영 보강 검증 (3단계)
+
+2026-11-20에 추가한 시나리오다. 실행 결과는 [작업일지](../worklogs/2026-11-20.md#3단계-실행)에 있다. 모두 실습 계층이 떠 있을 때 실행하고, 주입한 장애는 같은 시나리오 안에서 되돌린다.
+
+### V-OPS-01~05 장애 주입
+
+| ID | 주입 | 되돌리기 | 판정 |
+| --- | --- | --- | --- |
+| V-OPS-01 | 없는 이미지 태그의 revision으로 운영 서비스 `update-service` | 직전 revision으로 `update-service` | 기존 task가 계속 응답(사용자 영향 없음), stopped `TaskFailedToStart`·`CannotPullContainerError`, circuit breaker가 있으면 자동 롤백 |
+| V-OPS-02 | `DB_USERNAME`을 틀린 revision 배포 | 위와 같음 | 새 task exit 1·`password authentication failed`, 기존 task 유지 |
+| V-OPS-03 | task role에서 `application-files` 정책 분리 | 정책 다시 연결 | 업로드 500 `FILE_UPLOAD_FAILED`, 다운로드 503 `FILE_STORAGE_UNAVAILABLE`(404가 아님), `X-Request-Id`로 원인 로그 추적, `alb-target-5xx` ALARM |
+| V-OPS-04 | `aws elasticache reboot-cache-cluster` | 자동 | 조회·다운로드 200 유지(DB 우회), 지연 증가 기록 |
+| V-OPS-05 | scalable target min 0, desired 0을 4분 | min 1, desired 1 | ALB 503, `alb-elb-5xx`와 `alb-no-healthy-target` ALARM → 복구 후 OK, 복구 시간 기록 |
+
+각 시나리오는 동안 2초 간격으로 조회를 보내 비정상 응답 구간을 기록하고, 중지 사유는 `/aws/events/<prefix>-ecs-task-stopped`에서 확인한다.
+
+### V-BAK-01~02 백업 복원
+
+- V-BAK-01: [백업 복원](DEPLOYMENT.md#412-1-백업-복원-ops-02) 절차로 별도 클러스터에 PITR → 일회성 `psql` task로 복원본·운영본 `files` 행 수 비교 → 복원본 모든 `storage_path`의 S3 객체 존재·크기·표본 해시 확인 → 검증 클러스터 삭제. 판정: RPO(사고 시각 − `LatestRestorableTime`) 5분 이하, RTO(복원 시작 → 검증 완료) 60분 이하, 불일치 0.
+- V-BAK-02: S3 객체 삭제 후 삭제 마커 제거로 복구. 판정: 같은 해시.
+
+### V-SCAN-01~05 악성코드 검사 (FILE-03)
+
+| ID | 동작 | 판정 |
+| --- | --- | --- |
+| V-SCAN-01 | 정상 텍스트 업로드 | 응답 `scanning`/`PENDING`, 그동안 다운로드 409 `FILE_SCAN_PENDING`, 수십 초 안에 `available`/`CLEAN`, 다운로드 200, 객체 태그에 `GuardDutyMalwareScanStatus=NO_THREATS_FOUND`와 `extension-check`가 함께 있음 |
+| V-SCAN-02 | EICAR 시험 문자열 업로드 | `quarantined`/`INFECTED`, 다운로드 403 `FILE_QUARANTINED`, 태그 `THREATS_FOUND` |
+| V-SCAN-03 | 끝난 파일에 반대 결과를 SQS로 다시 보냄(중복·역순) | 상태가 바뀌지 않음 |
+| V-SCAN-04 | 업로드 직후 삭제 | 검사 결과가 와도 조회 404·목록 제외 유지 |
+| V-SCAN-05 | DB에 없는 객체 키의 결과를 SQS로 보냄 | 재시도 뒤 DLQ로 이동, `scan-results-dlq` ALARM |
+
+검사 시간 초과(15분)는 자동 테스트(`ScanResultServiceTests`)로 확인한다.
+
+### V-CICD-01~03 승격·롤백
+
+- V-CICD-01: main에 backend 변경 머지 → staging 배포·smoke → `production` 승인 → 배포·smoke·5xx 확인. 판정: 두 서비스가 같은 `taskDefinitionArn`(같은 digest), `latest`가 그 digest.
+- V-CICD-02: Run workflow `fault=start-failure`, `fault_target=staging`. 판정: staging circuit breaker 롤백, workflow 실패, production 승인 요청 없음, 배포 실패 이메일.
+- V-CICD-03: Run workflow `fault=runtime-failure`, `fault_target=production`. 판정: staging 통과 → 승인 → production smoke 실패(업로드 5xx) → workflow가 직전 revision으로 롤백, 롤백 후 smoke 정상.
+
+### V-IAC-01~03 Terraform CI
+
+- V-IAC-01: `terraform/` 변경 PR → static·plan(두 계층) 통과, plan role이 업로드 파일을 읽지 못함(`s3:GetObject` 거부).
+- V-IAC-02: 실습 계층 리소스를 콘솔·CLI로 바꿈(예: 알람 임계값) → Run workflow(drift) → `drift (dev)` 실패와 변경 목록. 코드대로 되돌린 뒤 다시 실행해 통과.
+- V-IAC-03: 변경 있는 plan의 main 머지 → `terraform-dev` 승인 → 저장된 plan apply. 변경 없는 머지에서는 apply job이 건너뛰어짐.
+
+### V-PERF-03 부하·확장
+
+ECS 일회성 task(k6)로 AWS 안에서 부하를 준다: 0→40 VU 2분, 40 VU 6분, 감소 1분, 요청 비율 단건 70%·목록 20%·100KB 업로드 10%. 같은 조건을 (a) task 1개 고정(scalable target max 1), (b) Auto Scaling 1~4로 두 번 실행한다. 판정: 처리량·오류율·p50/p95, task 수 변화와 확장·축소 시각, CPU를 기록하고 (a)와 비교한다. 축소는 부하 종료 뒤 15분 이상 걸린다.

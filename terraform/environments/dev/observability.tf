@@ -241,3 +241,36 @@ resource "aws_cloudwatch_log_resource_policy" "events_to_logs" {
   policy_name     = "${local.name_prefix}-events-to-logs"
   policy_document = data.aws_iam_policy_document.events_to_logs.json
 }
+
+# OBS-02: a deployment the circuit breaker rolled back is an ECS event, not a
+# metric, so no alarm saw it (first staging deploy on 2026-11-20 failed silently
+# outside GitHub Actions). Send it to the same alarm topic as the alarms.
+resource "aws_cloudwatch_event_rule" "ecs_deployment_failed" {
+  name        = "${local.name_prefix}-ecs-deployment-failed"
+  description = "ECS deployment failed or rolled back by the circuit breaker (any service in the cluster)."
+
+  event_pattern = jsonencode({
+    source        = ["aws.ecs"]
+    "detail-type" = ["ECS Deployment State Change"]
+    resources     = [{ prefix = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/" }]
+    detail = {
+      eventName = ["SERVICE_DEPLOYMENT_FAILED"]
+    }
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "ecs_deployment_failed" {
+  rule = aws_cloudwatch_event_rule.ecs_deployment_failed.name
+  arn  = data.aws_sns_topic.alarms.arn
+
+  input_transformer {
+    input_paths = {
+      service = "$.resources[0]"
+      reason  = "$.detail.reason"
+      time    = "$.time"
+    }
+    input_template = "\"[fileshare-dev] ECS deployment FAILED at <time>: <service> - <reason>. Check ECS service events and /aws/events/fileshare-dev-ecs-task-stopped.\""
+  }
+}
