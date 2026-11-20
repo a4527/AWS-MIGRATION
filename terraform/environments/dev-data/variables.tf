@@ -177,3 +177,8 @@ variable "budget_filter_by_owner_tag" {
   type        = bool
   default     = true
 }
+
+variable "terraform_state_bucket_name" {
+  description = "Terraform state bucket created by terraform/bootstrap (IAC-01), used by the CI roles (IAC-03)."
+  type        = string
+}

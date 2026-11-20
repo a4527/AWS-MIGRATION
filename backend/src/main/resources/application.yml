@@ -1,4 +1,9 @@
 spring:
+  # Scan result polling (long poll) must not delay the other scheduled jobs.
+  task:
+    scheduling:
+      pool:
+        size: 3
   application:
     name: file-share-api
   datasource:
@@ -58,5 +63,12 @@ app:
     upload:
       record-attempts: ${APP_FILE_UPLOAD_RECORD_ATTEMPTS:3}
       record-backoff: ${APP_FILE_UPLOAD_RECORD_BACKOFF:PT0.1S}
+    # FILE-03 (DEC-018): none = no scanner (NOT_SCANNED, downloadable),
+    # guardduty = GuardDuty Malware Protection for S3 results via SQS.
+    scan:
+      mode: ${APP_FILE_SCAN_MODE:none}
+      queue-url: ${APP_FILE_SCAN_QUEUE_URL:}
+      timeout: ${APP_FILE_SCAN_TIMEOUT:PT15M}
+      timeout-check-interval: ${APP_FILE_SCAN_TIMEOUT_CHECK_INTERVAL:PT1M}
   storage:
     local-root: ${APP_STORAGE_LOCAL_ROOT:build/local-storage}

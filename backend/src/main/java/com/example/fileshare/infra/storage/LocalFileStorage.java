@@ -38,7 +38,10 @@ public class LocalFileStorage implements FileStorage {
     public StorageObject load(String storagePath) throws IOException {
         Path path = Path.of(storagePath).toAbsolutePath().normalize();
         Resource resource = new UrlResource(path.toUri());
-        if (!resource.exists() || !resource.isReadable()) {
+        if (!resource.exists()) {
+            throw new StorageObjectNotFoundException(storagePath, null);
+        }
+        if (!resource.isReadable()) {
             throw new IOException("Stored file is not readable");
         }
         return new StorageObject(resource, Files.size(path));

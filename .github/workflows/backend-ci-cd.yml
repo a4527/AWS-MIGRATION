@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - "backend/**"
+      - "scripts/smoke.sh"
+      - "scripts/ecs-deploy.sh"
       - ".github/workflows/backend-ci-cd.yml"
       - ".trivyignore.yaml"
   # DEC-015: a push to main that passes test and scan deploys automatically.
@@ -14,20 +16,47 @@ on:
       - main
     paths:
       - "backend/**"
+      - "scripts/smoke.sh"
+      - "scripts/ecs-deploy.sh"
       - ".github/workflows/backend-ci-cd.yml"
       - ".trivyignore.yaml"
   workflow_dispatch:
+    inputs:
+      fault:
+        # CICD-03 drill only. Deploys a deliberately broken variant of the
+        # verified revision to prove that the pipeline stops or rolls back.
+        description: "Fault drill (none for a normal deploy)"
+        type: choice
+        default: none
+        options:
+          - none
+          - start-failure
+          - runtime-failure
+      fault_target:
+        description: "Where the faulty variant is deployed"
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
 
 permissions:
   contents: read
+
+# One deployment pipeline at a time on main; PR runs are independent.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || 'deploy-main' }}
+  cancel-in-progress: false
 
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: fileshare-dev-backend
   ECS_CLUSTER: fileshare-dev-ecs
   ECS_SERVICE: fileshare-dev-backend
+  ECS_STAGING_SERVICE: fileshare-dev-backend-staging
   ECS_CONTAINER_NAME: backend
   AURORA_CLUSTER: fileshare-dev-aurora
+  ALB_NAME: fileshare-dev-alb
   CI_IMAGE: fileshare-backend:${{ github.sha }}
 
 jobs:
@@ -92,18 +121,22 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  deploy:
-    name: Push image and deploy ECS service
+  # Push once, pin the digest, and register one task definition revision that
+  # staging and production both run (CICD-02: promote the same artifact).
+  publish:
+    name: Publish image and register revision
     runs-on: ubuntu-latest
     needs: image
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    # One deployment at a time; a newer push waits instead of cancelling a rollout.
-    concurrency:
-      group: deploy-dev
-      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write
+    outputs:
+      deploy: ${{ steps.target.outputs.deploy }}
+      digest: ${{ steps.push.outputs.digest }}
+      revision: ${{ steps.register.outputs.revision }}
+      staging_revision: ${{ steps.register.outputs.staging_revision }}
+      production_revision: ${{ steps.register.outputs.production_revision }}
 
     steps:
       - name: Download verified image
@@ -124,88 +157,209 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Push verified backend image
-        id: build-image
+      - name: Push verified image and resolve digest
+        id: push
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          docker tag "$CI_IMAGE" "$IMAGE_URI"
-          docker push "$IMAGE_URI"
-          # latest = last image that passed test and scan on main. A recreated
-          # lab layer starts from it (Terraform template tag, DEC-015).
-          docker tag "$CI_IMAGE" "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
-          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+          docker tag "$CI_IMAGE" "$ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$GITHUB_SHA"
+          DIGEST=$(aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image_ref=$ECR_REGISTRY/$ECR_REPOSITORY@$DIGEST" >> "$GITHUB_OUTPUT"
 
-      # The application layer (ECS) exists only during labs. When it is down the
-      # image stays in ECR and the run succeeds without deploying.
+      # The application layer exists only during labs. When it is down the image
+      # stays in ECR and the run succeeds without deploying.
       - name: Check application layer
         id: target
         run: |
-          STATUS=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query "services[0].status" --output text 2>/dev/null || echo MISSING)
-          if [ "$STATUS" != "ACTIVE" ]; then
+          STATES=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" "$ECS_STAGING_SERVICE" \
+            --query "services[?status=='ACTIVE'].serviceName" --output text 2>/dev/null || true)
+          if ! grep -qw "$ECS_SERVICE" <<<"$STATES" || ! grep -qw "$ECS_STAGING_SERVICE" <<<"$STATES"; then
             echo "deploy=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ECS service $ECS_SERVICE is not active ($STATUS). Image pushed; deployment skipped."
-            echo "Deployment skipped: application layer is down (service status: $STATUS). Image pushed to ECR." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Application layer is down (active services: ${STATES:-none}). Image pushed; deployment skipped."
+            echo "Deployment skipped: application layer is down (active services: ${STATES:-none}). Image pushed to ECR." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          RUNNING=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
-            --query "services[0].runningCount" --output text)
           echo "deploy=true" >> "$GITHUB_OUTPUT"
-          echo "running=$RUNNING" >> "$GITHUB_OUTPUT"
 
-      # DEC-010: with no running task Aurora may be paused at 0 ACU and the first
-      # task would exit before it resumes. Listing the writer's log files resumes it.
-      - name: Wake Aurora before the first task
-        if: steps.target.outputs.deploy == 'true' && steps.target.outputs.running == '0'
-        run: |
-          WRITER=$(aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" \
-            --query 'DBClusters[0].DBClusterMembers[?IsClusterWriter].DBInstanceIdentifier' --output text)
-          aws rds describe-db-log-files --db-instance-identifier "$WRITER" --query 'length(DescribeDBLogFiles)'
-          sleep 30
-          aws rds describe-events --source-type db-instance --source-identifier "$WRITER" --duration 10 \
-            --query 'Events[].[Date,Message]' --output text
-
-      - name: Read current ECS task definition
+      # Copy the running production revision (keeps secrets, env, roles, Owner
+      # tag) and pin the image by digest so every stage runs the same bytes.
+      - name: Register task definition revision
+        id: register
         if: steps.target.outputs.deploy == 'true'
+        env:
+          IMAGE_REF: ${{ steps.push.outputs.image_ref }}
+          FAULT_MODE: ${{ github.event.inputs.fault || 'none' }}
+          FAULT_TARGET: ${{ github.event.inputs.fault_target || 'staging' }}
         run: |
-          TASK_DEFINITION_ARN=$(aws ecs describe-services \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE" \
-            --query "services[0].taskDefinition" \
-            --output text)
-
-          # Keep the current revision's tags (Owner is required by the account
-          # cleanup policy) so the new revision registers with the same tags.
-          aws ecs describe-task-definition \
-            --task-definition "$TASK_DEFINITION_ARN" \
-            --include TAGS \
-            --output json \
-            | jq '.taskDefinition + {tags: (.tags // [])}' \
-            > task-definition.json
-
-          if ! jq -e '.tags | any(.key == "Owner" and (.value | length > 0))' task-definition.json > /dev/null; then
+          CURRENT=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query "services[0].taskDefinition" --output text)
+          aws ecs describe-task-definition --task-definition "$CURRENT" --include TAGS --output json \
+            | jq --arg img "$IMAGE_REF" '.taskDefinition + {tags: (.tags // [])}
+                | {family, taskRoleArn, executionRoleArn, networkMode, containerDefinitions,
+                   volumes, placementConstraints, requiresCompatibilities, cpu, memory, tags}
+                | .containerDefinitions[0].image = $img' > td.json
+          if ! jq -e '.tags | any(.key == "Owner" and (.value | length > 0))' td.json > /dev/null; then
             echo "::error::Current task definition has no Owner tag; refusing to register an untagged revision."
             exit 1
           fi
+          REV=$(aws ecs register-task-definition --cli-input-json file://td.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "revision=$REV" >> "$GITHUB_OUTPUT"
 
-      - name: Render ECS task definition
-        if: steps.target.outputs.deploy == 'true'
-        id: render-task-definition
-        uses: aws-actions/amazon-ecs-render-task-definition@v1
-        with:
-          task-definition: task-definition.json
-          container-name: ${{ env.ECS_CONTAINER_NAME }}
-          image: ${{ steps.build-image.outputs.image_uri }}
+          # CICD-03 drill: a broken variant of the same revision for one stage.
+          FAULTY="$REV"
+          case "$FAULT_MODE" in
+            start-failure)   # the app cannot authenticate to the DB and exits at start
+              jq '(.containerDefinitions[0].environment[] | select(.name == "DB_USERNAME") | .value) = "drill_wrong_user"' td.json > fault.json ;;
+            runtime-failure) # health stays UP but uploads fail with 5xx
+              jq '(.containerDefinitions[0].environment[] | select(.name == "S3_BUCKET") | .value) = "drill-missing-bucket"' td.json > fault.json ;;
+          esac
+          if [ "$FAULT_MODE" != "none" ]; then
+            FAULTY=$(aws ecs register-task-definition --cli-input-json file://fault.json \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
+            echo "::warning::Fault drill '$FAULT_MODE' targets $FAULT_TARGET with $FAULTY"
+          fi
+          STG_REV="$REV"; PROD_REV="$REV"
+          if [ "$FAULT_MODE" != "none" ] && [ "$FAULT_TARGET" = "staging" ]; then STG_REV="$FAULTY"; fi
+          if [ "$FAULT_MODE" != "none" ] && [ "$FAULT_TARGET" = "production" ]; then PROD_REV="$FAULTY"; fi
+          echo "staging_revision=$STG_REV" >> "$GITHUB_OUTPUT"
+          echo "production_revision=$PROD_REV" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release"
+            echo "| item | value |"
+            echo "| --- | --- |"
+            echo "| commit | \`$GITHUB_SHA\` |"
+            echo "| image digest | \`${IMAGE_REF##*@}\` |"
+            echo "| revision | \`${REV##*/}\` |"
+            echo "| fault drill | $FAULT_MODE ($FAULT_TARGET) |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Deploy ECS service
-        if: steps.target.outputs.deploy == 'true'
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+  staging:
+    name: Deploy to staging and smoke test
+    runs-on: ubuntu-latest
+    needs: publish
+    if: needs.publish.outputs.deploy == 'true'
+    environment: staging
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          task-definition: ${{ steps.render-task-definition.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
-          wait-for-service-stability: true
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # DEC-010: with no running production task Aurora may be paused at 0 ACU.
+      - name: Wake Aurora if no task is running
+        run: |
+          RUNNING=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query "services[0].runningCount" --output text)
+          if [ "$RUNNING" = "0" ]; then
+            WRITER=$(aws rds describe-db-clusters --db-cluster-identifier "$AURORA_CLUSTER" \
+              --query 'DBClusters[0].DBClusterMembers[?IsClusterWriter].DBInstanceIdentifier' --output text)
+            aws rds describe-db-log-files --db-instance-identifier "$WRITER" --query 'length(DescribeDBLogFiles)' || true
+            sleep 30
+          fi
+
+      - name: Deploy revision to staging
+        env:
+          REVISION: ${{ needs.publish.outputs.staging_revision }}
+        run: scripts/ecs-deploy.sh "$ECS_STAGING_SERVICE" "$REVISION"
+
+      - name: Smoke test staging
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --query 'LoadBalancers[0].DNSName' --output text)
+          SMOKE_RUN_ID="${GITHUB_RUN_ID}-stg" scripts/smoke.sh "http://$ALB_DNS" staging
+
+  production:
+    name: Promote to production
+    runs-on: ubuntu-latest
+    needs: [publish, staging]
+    # Required reviewers on the "production" environment gate this job.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Record rollback target
+        id: previous
+        run: |
+          PREV=$(aws ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" \
+            --query "services[0].taskDefinition" --output text)
+          echo "revision=$PREV" >> "$GITHUB_OUTPUT"
+          echo "Rollback target: \`${PREV##*/}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Deploy revision to production
+        id: deploy
+        env:
+          REVISION: ${{ needs.publish.outputs.production_revision }}
+        run: |
+          echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+          scripts/ecs-deploy.sh "$ECS_SERVICE" "$REVISION"
+
+      # CICD-03: a deploy that starts but serves errors is rolled back by the
+      # pipeline (the circuit breaker only covers start and health failures).
+      - name: Smoke test production and check 5xx
+        env:
+          DEPLOY_START: ${{ steps.deploy.outputs.start }}
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --query 'LoadBalancers[0].DNSName' --output text)
+          SMOKE_RUN_ID="${GITHUB_RUN_ID}-prod" scripts/smoke.sh "http://$ALB_DNS"
+          sleep 60
+          ALB_DIM=$(aws elbv2 describe-load-balancers --names "$ALB_NAME" --query 'LoadBalancers[0].LoadBalancerArn' --output text | sed 's#.*:loadbalancer/##')
+          ERRORS=$(aws cloudwatch get-metric-statistics --namespace AWS/ApplicationELB \
+            --metric-name HTTPCode_Target_5XX_Count --dimensions Name=LoadBalancer,Value="$ALB_DIM" \
+            --start-time "$(date -u -d "@$DEPLOY_START" +%Y-%m-%dT%H:%M:%SZ)" --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --period 60 --statistics Sum --query 'sum(Datapoints[].Sum)' --output text)
+          ERRORS=${ERRORS%.*}
+          echo "Target 5xx since deploy start: ${ERRORS}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ERRORS" != "None" ] && [ "${ERRORS:-0}" -gt 0 ]; then
+            echo "::error::Backend returned $ERRORS 5xx responses after the deploy."
+            exit 1
+          fi
+
+      - name: Roll back production
+        if: failure() && steps.previous.outputs.revision != ''
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.revision }}
+        run: |
+          echo "::error::Rolling production back to ${PREVIOUS##*/}"
+          scripts/ecs-deploy.sh "$ECS_SERVICE" "$PREVIOUS"
+          echo "Rolled back to \`${PREVIOUS##*/}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # latest = last digest that passed staging and production. A recreated
+      # lab layer starts from it (Terraform template tag, DEC-015).
+      - name: Tag released digest as latest
+        if: success()
+        env:
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          RELEASED: ${{ needs.publish.outputs.production_revision }}
+        run: |
+          MANIFEST=$(aws ecr batch-get-image --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageDigest="$DIGEST" --query 'images[0].imageManifest' --output text)
+          aws ecr put-image --repository-name "$ECR_REPOSITORY" --image-tag latest \
+            --image-manifest "$MANIFEST" > /dev/null 2>&1 || echo "latest already points to $DIGEST"
+          echo "Released \`$DIGEST\` as revision \`${RELEASED##*/}\`" >> "$GITHUB_STEP_SUMMARY"

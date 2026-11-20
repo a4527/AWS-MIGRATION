@@ -40,7 +40,9 @@
 - `FILE_INVALID_TYPE`: 허용되지 않는 파일 형식
 - `FILE_UPLOAD_FAILED`: 업로드 처리 실패
 - `FILE_SCAN_FAILED`: 바이러스 검사 또는 메타데이터 추출 실패
-- `FILE_QUARANTINED`: 파일이 검역 상태임
+- `FILE_QUARANTINED`: 파일이 격리 상태임(악성 판정 또는 검사 실패·미지원·시간 초과) (403)
+- `FILE_SCAN_PENDING`: 악성코드 검사가 끝나지 않아 아직 내려받을 수 없음 (409, FILE-03)
+- `FILE_STORAGE_UNAVAILABLE`: 저장소에 접근할 수 없음(권한·장애). 파일이 없는 경우(`RESOURCE_NOT_FOUND`)와 구분한다 (503)
 - `FILE_DELETE_FAILED`: 삭제 처리 실패
 - `IDEMPOTENCY_IN_PROGRESS`: 같은 `Idempotency-Key`의 요청이 처리 중임 (409, `Retry-After` 헤더 포함)
 - `IDEMPOTENCY_KEY_MISMATCH`: 같은 `Idempotency-Key`가 다른 요청에 이미 쓰임 (422)
@@ -418,7 +420,14 @@ description: project plan
 
 - 인증 필요 여부: 예
 - 설명: 파일 바이너리를 다운로드한다.
-- `available` 상태의 파일만 다운로드할 수 있다.
+- `available` 상태의 파일만 다운로드할 수 있다. 검사 상태별 응답(FILE-03, [DEC-018](../DECISIONS.md#결정-목록)):
+
+| `status` / `scanStatus` | 응답 |
+| --- | --- |
+| `available` / `CLEAN` | 200 (AWS, GuardDuty 검사 통과) |
+| `available` / `NOT_SCANNED` | 200 (검사 엔진이 없는 로컬·온프레미스. 검사했다고 주장하지 않음) |
+| `scanning` / `PENDING` | 409 `FILE_SCAN_PENDING`. 잠시 뒤 다시 시도 |
+| `quarantined` / `INFECTED` 또는 `FAILED` | 403 `FILE_QUARANTINED` |
 - 상태는 캐시가 아닌 DB에서 확인한다. 삭제 직후에도 다운로드되지 않는다.
 
 응답 형식:
@@ -431,6 +440,8 @@ description: project plan
 - `AUTH_INVALID_TOKEN`
 - `AUTH_ACCESS_DENIED`
 - `FILE_QUARANTINED`
+- `FILE_SCAN_PENDING`
+- `FILE_STORAGE_UNAVAILABLE` (2026-11-20 전에는 저장소 접근 실패도 `RESOURCE_NOT_FOUND`로 응답했다. OPS-01 T3에서 발견해 고쳤다)
 - `RESOURCE_NOT_FOUND`
 
 ### `DELETE /api/files/{id}`
@@ -533,7 +544,7 @@ description: project plan
 | `DELETE /api/files/{id}` | 구현 | 논리 삭제 |
 | `GET /api/admin/storage/orphans`, `POST /api/admin/storage/orphans/cleanup` | 구현 | `ADMIN`만 |
 
-- 업로드 직후 상태는 `available`·`CLEAN`이다. 검사 결과를 DB에 반영하는 흐름은 FILE-03 범위다.
+- 업로드 직후 상태는 검사 방식(`app.file.scan.mode`)에 따른다. AWS(`guardduty`)는 `scanning`·`PENDING`으로 시작해 GuardDuty 결과로 `available`·`CLEAN` 또는 `quarantined`·`INFECTED`/`FAILED`가 된다(보통 1분 안, 15분 넘으면 `FAILED`). 로컬·온프레미스(`none`)는 `available`·`NOT_SCANNED`다(FILE-03).
 - 같은 파일을 `Idempotency-Key` 없이 다시 올리면 새 파일로 저장된다.
 - 10MiB를 넘는 업로드는 온프레미스에서 nginx가 `413`으로, 애플리케이션에서는 `FILE_TOO_LARGE`(400)로 거절한다.
 - 상태값은 응답에서 소문자(`available`, `deleted` 등)로, 검사 상태는 대문자(`CLEAN` 등)로 표기한다.

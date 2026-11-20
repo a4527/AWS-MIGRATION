@@ -155,3 +155,21 @@ variable "alarm_action_arns" {
   type        = list(string)
   default     = []
 }
+
+variable "staging_enabled" {
+  description = "Create a staging service in the same cluster for CICD-02 promotion (DEC-017)."
+  type        = bool
+  default     = false
+}
+
+variable "staging_header_value" {
+  description = "Value of the X-Deploy-Stage header that routes a request to the staging service."
+  type        = string
+  default     = "staging"
+}
+
+variable "extra_environment" {
+  description = "Additional plain (non-secret) environment variables for the backend container."
+  type        = map(string)
+  default     = {}
+}

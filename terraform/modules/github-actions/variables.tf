@@ -60,3 +60,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "github_environments" {
+  description = "GitHub environments whose OIDC subject may assume the deploy role."
+  type        = list(string)
+  default     = ["staging", "production"]
+}
+
+variable "extra_ecs_service_arns" {
+  description = "Additional ECS services (staging) the deploy role may update."
+  type        = list(string)
+  default     = []
+}

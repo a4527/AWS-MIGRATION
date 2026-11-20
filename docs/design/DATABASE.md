@@ -163,10 +163,12 @@
   - `COMPLETED`
   - `FAILED`
 - `files.scan_status`
-  - `PENDING`
-  - `CLEAN`
-  - `INFECTED`
-  - `FAILED`
+  - `NOT_SCANNED` (검사 엔진 없음, `available`. 2026-11-20 추가)
+  - `PENDING` (검사 대기, `scanning`)
+  - `CLEAN` (`available`)
+  - `INFECTED` (`quarantined`)
+  - `FAILED` (검사 실패·미지원·접근 불가·시간 초과, `quarantined`)
+- 검사 결과 반영은 `scan_status = 'PENDING' and status <> 'DELETED'`인 행만 바꾸는 조건부 UPDATE다. 중복·역순 결과와 삭제된 파일은 바뀌지 않는다(FILE-03, [DEC-018](../DECISIONS.md#결정-목록)).
 
 ## 고려사항
 
@@ -181,10 +183,11 @@
 | 테이블·컬럼 | 상태 |
 | --- | --- |
 | `users` | 구현 |
-| `files` | 구현. 단 `extracted_metadata`, `scanned_at`, `quarantined_at` 컬럼과 DB 기본값(`uploaded`, `PENDING`)은 Entity에 없다. 애플리케이션이 업로드 시 `AVAILABLE`·`CLEAN`을 직접 넣는다 |
+| `files` | 구현. 단 `extracted_metadata`, `scanned_at`, `quarantined_at` 컬럼과 DB 기본값(`uploaded`, `PENDING`)은 Entity에 없다. 애플리케이션이 업로드 시 검사 방식에 따라 `SCANNING`·`PENDING`(AWS) 또는 `AVAILABLE`·`NOT_SCANNED`(로컬·온프레미스)를 넣는다 |
 | `upload_requests` | 구현 (FILE-05) |
 | `file_permissions`, `upload_logs` | 미구현. 권한 공유·감사 로그를 위한 예정 설계다 |
 
 - 상태값은 DB에 대문자 enum 이름(`AVAILABLE`, `DELETED` 등)으로 저장되고 API 응답에서 소문자로 바뀐다.
+- Hibernate 6은 enum 컬럼을 처음 만들 때 허용 값 CHECK 제약을 만들고, `ddl-auto=update`는 기존 제약을 고치지 않는다. 2026-11-20 전에 만든 온프레미스 DB에 `NOT_SCANNED`를 넣으면 제약 위반이 날 수 있다. 그때는 제약을 지운다: `ALTER TABLE files DROP CONSTRAINT IF EXISTS files_scan_status_check;`. AWS(Aurora)는 `NOT_SCANNED`를 쓰지 않아 영향이 없다.
 - 외래 키 제약은 Entity에 선언되어 있지 않다. `files.owner_id`와 `users.id`의 관계는 애플리케이션이 보장한다.
 - 이전 Day별 구현 기준은 [이전 문서 요약](../LEGACY.md)에 남겼다.

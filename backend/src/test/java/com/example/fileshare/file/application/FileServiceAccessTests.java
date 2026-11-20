@@ -34,7 +34,7 @@ class FileServiceAccessTests {
         NoOpFileMetadataCache cache = new NoOpFileMetadataCache();
         fileService = new FileService(files, storage, cache);
         uploadService = new FileUploadService(files, requests, new UploadRecorder(files, requests), storage, cache,
-                TestFixtures.policy(), Clock.systemUTC());
+                TestFixtures.policy(), ScanPolicy.none(), Clock.systemUTC());
     }
 
     @Test

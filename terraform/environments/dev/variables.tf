@@ -174,3 +174,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "ecs_staging_enabled" {
+  description = "Create the staging ECS service used by CD before promotion (CICD-02, DEC-017)."
+  type        = bool
+  default     = true
+}

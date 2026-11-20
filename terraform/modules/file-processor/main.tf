@@ -112,6 +112,9 @@ resource "aws_lambda_permission" "allow_s3" {
 
 resource "aws_s3_bucket_notification" "this" {
   bucket = var.file_bucket_id
+  # FILE-03: GuardDuty Malware Protection turns on S3 -> EventBridge for this
+  # bucket. Declare it so Terraform does not revert it as drift.
+  eventbridge = var.enable_eventbridge_notifications
 
   lambda_function {
     lambda_function_arn = aws_lambda_function.this.arn
@@ -123,13 +126,16 @@ resource "aws_s3_bucket_notification" "this" {
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  alarm_name          = "${var.name_prefix}-file-processor-errors"
-  alarm_description   = "File processor Lambda has one or more errors."
-  namespace           = "AWS/Lambda"
-  metric_name         = "Errors"
-  statistic           = "Sum"
-  period              = 60
-  evaluation_periods  = 1
+  alarm_name        = "${var.name_prefix}-file-processor-errors"
+  alarm_description = "File processor Lambda has one or more errors."
+  namespace         = "AWS/Lambda"
+  metric_name       = "Errors"
+  statistic         = "Sum"
+  period            = 60
+  # Metrics arrive 1-2 minutes late; alarm if any of the last 3 minutes breached
+  # (a short burst was missed with a single period, OPS-01 T3).
+  evaluation_periods  = 3
+  datapoints_to_alarm = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"

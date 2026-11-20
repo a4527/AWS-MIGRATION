@@ -62,3 +62,8 @@ output "log_group_name" {
   description = "Backend CloudWatch log group."
   value       = aws_cloudwatch_log_group.application.name
 }
+
+output "staging_service_name" {
+  description = "Staging ECS service name (null when disabled)."
+  value       = var.staging_enabled ? aws_ecs_service.staging[0].name : null
+}

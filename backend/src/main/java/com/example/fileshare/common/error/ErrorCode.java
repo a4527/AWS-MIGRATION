@@ -15,6 +15,8 @@ public enum ErrorCode {
     FILE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "File upload failed"),
     FILE_SCAN_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "File scan failed"),
     FILE_QUARANTINED(HttpStatus.FORBIDDEN, "File is quarantined"),
+    FILE_SCAN_PENDING(HttpStatus.CONFLICT, "File scan is in progress"),
+    FILE_STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE, "File storage is unavailable"),
     FILE_DELETE_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "File delete failed"),
     IDEMPOTENCY_IN_PROGRESS(HttpStatus.CONFLICT, "A request with the same idempotency key is in progress"),
     IDEMPOTENCY_KEY_MISMATCH(HttpStatus.UNPROCESSABLE_ENTITY, "Idempotency key was used for a different request"),

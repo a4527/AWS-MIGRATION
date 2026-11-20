@@ -16,6 +16,8 @@ import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 @Component
@@ -74,6 +76,14 @@ public class S3FileStorage implements FileStorage {
                     .key(storagePath)
                     .build());
             return new StorageObject(new InputStreamResource(inputStream), headObject.contentLength());
+        } catch (NoSuchKeyException exception) {
+            throw new StorageObjectNotFoundException(storagePath, exception);
+        } catch (S3Exception exception) {
+            // HeadObject reports a missing key as a bare 404 (no NoSuchKey body).
+            if (exception.statusCode() == 404) {
+                throw new StorageObjectNotFoundException(storagePath, exception);
+            }
+            throw new IOException("Failed to load file from S3", exception);
         } catch (Exception exception) {
             throw new IOException("Failed to load file from S3", exception);
         }

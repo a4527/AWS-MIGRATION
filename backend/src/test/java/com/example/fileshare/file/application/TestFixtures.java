@@ -1,5 +1,9 @@
 package com.example.fileshare.file.application;
 
+import com.example.fileshare.file.domain.ScanStatus;
+
+import com.example.fileshare.file.domain.FileStatus;
+
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.repository.FileMetadataRepository;
 import com.example.fileshare.file.repository.InMemoryFileMetadataRepository;
@@ -100,6 +104,16 @@ final class TestFixtures {
                 throw new IllegalStateException("database unavailable");
             }
             return delegate.findByStoragePath(storagePath);
+        }
+
+        @Override
+        public int applyScanResult(String storagePath, ScanStatus scanStatus, FileStatus status, Instant at) {
+            return delegate.applyScanResult(storagePath, scanStatus, status, at);
+        }
+
+        @Override
+        public List<String> findPendingScanBefore(Instant before) {
+            return delegate.findPendingScanBefore(before);
         }
     }
 

@@ -44,7 +44,7 @@ class FileUploadServiceTests {
         storage = new FaultyFileStorage(storageRoot);
         clock = new MutableClock(Instant.parse("2026-11-17T00:00:00Z"));
         service = new FileUploadService(files, requests, new UploadRecorder(files, requests), storage,
-                new NoOpFileMetadataCache(), TestFixtures.policy(), clock);
+                new NoOpFileMetadataCache(), TestFixtures.policy(), ScanPolicy.none(), clock);
     }
 
     @Test

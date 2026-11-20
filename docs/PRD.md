@@ -94,6 +94,7 @@
 
 ### 상태 전이 원칙
 
+- 현재 구현(FILE-03, [DEC-018](DECISIONS.md#결정-목록)): 객체 저장 후 DB에 `scanning`·`PENDING`으로 기록하므로 `uploaded`는 거치지 않는다. 검사 엔진은 AWS GuardDuty Malware Protection for S3이고, 결과가 깨끗하면 `available`, 악성·검사 실패·미지원·15분 시간 초과면 `quarantined`다. 검사 엔진이 없는 환경은 `available`·`NOT_SCANNED`로 저장해 검사했다고 주장하지 않는다.
 - 업로드 성공 시 `uploaded` 상태로 시작한다.
 - 서버리스 후처리 또는 동기 후처리가 완료되면 `available`로 전환한다.
 - 검사 중에는 `scanning` 상태를 유지한다.
@@ -133,8 +134,8 @@
 
 요구사항 중 아직 구현되지 않은 범위다. 구현 상태의 기준은 [API](design/API.md#현재-구현-요약)와 [DATABASE](design/DATABASE.md#구현-상태)이며, 작업은 [TASKS](TASKS.md)에서 추적한다.
 
-- 상태 흐름의 `uploaded`·`scanning` 단계와 검사 결과의 DB 반영: 현재 업로드 직후 `available`로 저장한다(FILE-03).
-- 실제 바이러스 검사 엔진: 현재 Lambda는 확장자 가드만 한다.
+- 상태 흐름의 `uploaded` 단계: 객체 저장 뒤 바로 `scanning`으로 기록한다. 검사 결과 반영과 실제 검사 엔진(GuardDuty)은 2026-11-20 FILE-03에서 구현했다(AWS만).
+- 온프레미스의 실제 바이러스 검사: 엔진이 없어 `NOT_SCANNED`로 둔다.
 - 업로드 이력·감사 로그(`upload_logs`), 파일 공유 권한(`file_permissions`).
 - 토큰 갱신·로그아웃 API.
 - 온프레미스의 후처리(동기 처리 또는 배치): 현재 없음.

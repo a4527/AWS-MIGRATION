@@ -51,6 +51,7 @@ public class FileUploadService {
     private final FileStorage fileStorage;
     private final FileMetadataCache fileMetadataCache;
     private final UploadPolicy policy;
+    private final ScanPolicy scanPolicy;
     private final Clock clock;
 
     public FileUploadService(
@@ -60,6 +61,7 @@ public class FileUploadService {
             FileStorage fileStorage,
             FileMetadataCache fileMetadataCache,
             UploadPolicy policy,
+            ScanPolicy scanPolicy,
             Clock clock
     ) {
         this.fileMetadataRepository = fileMetadataRepository;
@@ -68,6 +70,7 @@ public class FileUploadService {
         this.fileStorage = fileStorage;
         this.fileMetadataCache = fileMetadataCache;
         this.policy = policy;
+        this.scanPolicy = scanPolicy;
         this.clock = clock;
     }
 
@@ -98,8 +101,8 @@ public class FileUploadService {
                 target.storagePath(),
                 multipartFile.getSize(),
                 detectMimeType(multipartFile),
-                FileStatus.AVAILABLE,
-                ScanStatus.CLEAN,
+                scanPolicy.initialStatus(),
+                scanPolicy.initialScanStatus(),
                 normalizedDescription,
                 now,
                 now

@@ -39,22 +39,26 @@ def process_object(bucket, key):
     content_type = head.get("ContentType", "application/octet-stream")
     extension = os.path.splitext(key)[1].lower()
 
-    scan_status = "CLEAN"
+    # FILE-03: this is only an extension guard and metadata extraction. The
+    # real malware verdict comes from GuardDuty and is stored in the database,
+    # so this function must not write a "scan-status" that looks like one.
+    extension_check = "BLOCKED" if extension in BLOCKED_EXTENSIONS else "PASSED"
     processing_status = "COMPLETED"
-    reason = "basic_metadata_extracted"
+    reason = "blocked_extension" if extension_check == "BLOCKED" else "basic_metadata_extracted"
 
-    if extension in BLOCKED_EXTENSIONS:
-        scan_status = "FAILED"
-        processing_status = "QUARANTINED"
-        reason = "blocked_extension"
+    own_tags = {
+        "extension-check": extension_check,
+        "processing-status": processing_status,
+        "metadata-size": str(size),
+        "metadata-content-type": content_type[:128],
+        "processor": "lambda-file-processor",
+    }
 
-    tag_set = [
-        {"Key": "scan-status", "Value": scan_status},
-        {"Key": "processing-status", "Value": processing_status},
-        {"Key": "metadata-size", "Value": str(size)},
-        {"Key": "metadata-content-type", "Value": content_type[:128]},
-        {"Key": "processor", "Value": "lambda-file-processor"},
-    ]
+    # put_object_tagging replaces the whole tag set. Keep tags written by
+    # others (GuardDutyMalwareScanStatus) and drop the legacy scan-status tag.
+    existing = s3.get_object_tagging(Bucket=bucket, Key=key).get("TagSet", [])
+    kept = [t for t in existing if t["Key"] not in own_tags and t["Key"] != "scan-status"]
+    tag_set = kept + [{"Key": k, "Value": v} for k, v in own_tags.items()]
 
     s3.put_object_tagging(
         Bucket=bucket,
@@ -67,7 +71,7 @@ def process_object(bucket, key):
         "key": key,
         "size": size,
         "contentType": content_type,
-        "scanStatus": scan_status,
+        "extensionCheck": extension_check,
         "processingStatus": processing_status,
         "reason": reason,
     }
