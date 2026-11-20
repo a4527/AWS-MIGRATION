@@ -210,6 +210,11 @@ resource "aws_ecs_task_definition" "application" {
         {
           name  = "REDIS_SSL_ENABLED"
           value = "true"
+        },
+        {
+          # OBS-01: JSON logs with requestId and access-log fields as keys.
+          name  = "LOGGING_STRUCTURED_FORMAT_CONSOLE"
+          value = "ecs"
         }
       ]
 
@@ -334,6 +339,8 @@ resource "aws_cloudwatch_metric_alarm" "service_cpu_high" {
   threshold           = var.cpu_target_value
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
 
   dimensions = {
     ClusterName = aws_ecs_cluster.this.name
@@ -354,6 +361,8 @@ resource "aws_cloudwatch_metric_alarm" "service_memory_high" {
   threshold           = var.memory_target_value
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
 
   dimensions = {
     ClusterName = aws_ecs_cluster.this.name
@@ -365,15 +374,63 @@ resource "aws_cloudwatch_metric_alarm" "service_memory_high" {
 
 resource "aws_cloudwatch_metric_alarm" "target_5xx" {
   alarm_name          = "${var.name_prefix}-alb-target-5xx"
-  alarm_description   = "ALB target group is returning 5xx responses."
+  alarm_description   = "Backend (target) returned 5xx responses."
   namespace           = "AWS/ApplicationELB"
   metric_name         = "HTTPCode_Target_5XX_Count"
   statistic           = "Sum"
-  period              = 300
+  period              = 60
   evaluation_periods  = 1
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
+
+  dimensions = {
+    LoadBalancer = aws_lb.application.arn_suffix
+    TargetGroup  = aws_lb_target_group.application.arn_suffix
+  }
+
+  tags = var.tags
+}
+
+# OBS-02: the ALB itself answers 502/503 when no healthy target exists (task
+# stopped, failed deployment). Target 5xx alone misses that (V-AWS-04).
+resource "aws_cloudwatch_metric_alarm" "elb_5xx" {
+  alarm_name          = "${var.name_prefix}-alb-elb-5xx"
+  alarm_description   = "ALB returned 5xx itself (no healthy target, timeout, or connection error)."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  statistic           = "Sum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
+
+  dimensions = {
+    LoadBalancer = aws_lb.application.arn_suffix
+  }
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "no_healthy_target" {
+  alarm_name          = "${var.name_prefix}-alb-no-healthy-target"
+  alarm_description   = "Backend target group has no healthy target for 2 minutes."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HealthyHostCount"
+  statistic           = "Minimum"
+  period              = 60
+  evaluation_periods  = 2
+  threshold           = 1
+  comparison_operator = "LessThanThreshold"
+  # No data means no target registered at all, which is also an outage.
+  treat_missing_data = "breaching"
+  alarm_actions      = var.alarm_action_arns
+  ok_actions         = var.alarm_action_arns
 
   dimensions = {
     LoadBalancer = aws_lb.application.arn_suffix

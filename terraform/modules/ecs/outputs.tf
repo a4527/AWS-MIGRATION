@@ -47,3 +47,18 @@ output "target_group_arn" {
   description = "Application target group ARN."
   value       = aws_lb_target_group.application.arn
 }
+
+output "alb_arn_suffix" {
+  description = "ALB ARN suffix used as the CloudWatch LoadBalancer dimension."
+  value       = aws_lb.application.arn_suffix
+}
+
+output "target_group_arn_suffix" {
+  description = "Target group ARN suffix used as the CloudWatch TargetGroup dimension."
+  value       = aws_lb_target_group.application.arn_suffix
+}
+
+output "log_group_name" {
+  description = "Backend CloudWatch log group."
+  value       = aws_cloudwatch_log_group.application.name
+}

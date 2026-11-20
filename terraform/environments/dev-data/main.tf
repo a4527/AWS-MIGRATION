@@ -127,6 +127,24 @@ module "github_actions" {
   tags                        = local.common_tags
 }
 
+# OBS-02: alarm notifications. Kept in the persistent layer so the email
+# subscription is confirmed once, not after every lab. Recipients are the
+# budget alert addresses. Not KMS-encrypted: CloudWatch alarms publish to it
+# without an extra key policy.
+resource "aws_sns_topic" "alarms" {
+  name = "${local.name_prefix}-alarms"
+
+  tags = local.common_tags
+}
+
+resource "aws_sns_topic_subscription" "alarm_email" {
+  for_each = toset(var.budget_alert_emails)
+
+  topic_arn = aws_sns_topic.alarms.arn
+  protocol  = "email"
+  endpoint  = each.value
+}
+
 # Account cost guard (PORT-01). Kept in the persistent layer so it survives lab teardown.
 resource "aws_budgets_budget" "monthly" {
   name         = "${local.name_prefix}-monthly"

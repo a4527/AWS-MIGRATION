@@ -38,6 +38,11 @@ management:
 logging:
   level:
     com.example.fileshare: INFO
+    http.access: INFO
+  # OBS-01: AWS sets LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs for JSON logs (requestId and
+  # access-log fields become JSON keys). Local and on-prem keep the plain text format.
+  pattern:
+    level: "%5p [%X{requestId:-}]"
 
 app:
   jwt:

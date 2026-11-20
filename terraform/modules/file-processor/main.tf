@@ -133,6 +133,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   threshold           = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
 
   dimensions = {
     FunctionName = aws_lambda_function.this.function_name
@@ -152,6 +154,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   threshold           = var.duration_alarm_threshold_ms
   comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_action_arns
+  ok_actions          = var.alarm_action_arns
 
   dimensions = {
     FunctionName = aws_lambda_function.this.function_name

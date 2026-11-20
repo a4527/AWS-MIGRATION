@@ -59,3 +59,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "alarm_action_arns" {
+  description = "SNS topic ARNs notified when an alarm fires and when it recovers (OBS-02)."
+  type        = list(string)
+  default     = []
+}
