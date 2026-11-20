@@ -245,6 +245,30 @@ rm restore.tfstate
 
 `state push`는 serial이 같고 내용이 다른 state를 `-force` 없이 거부한다. 복구한 버전 이후에 바뀐 리소스는 state에서 빠지므로 plan 결과를 보고 import나 apply로 맞춘다.
 
+### 4.1-2 Terraform CI와 drift (IAC-03)
+
+결정: [DEC-019](../DECISIONS.md#결정-목록). workflow: `.github/workflows/terraform.yml`. role은 유지 계층 `modules/terraform-ci`가 만든다.
+
+| 이벤트 | 하는 일 | role |
+| --- | --- | --- |
+| PR (`terraform/**`) | `fmt -check`, 세 루트 모듈 `validate`, Trivy IaC 검사(HIGH/CRITICAL), 두 계층 `plan -lock=false` 요약 | `terraform-plan`(읽기 전용) |
+| main push | 두 계층 plan → 실습 계층 plan 파일 저장 → **`terraform-dev` 승인 후 그 plan 파일을 apply**. 실습 계층이 없으면 apply를 건너뛴다 | plan: `terraform-plan`, apply: `terraform-apply` |
+| 매일 00:00 UTC(09:00 KST)·수동 | `plan -refresh-only -detailed-exitcode`. 변경이 있으면 job 실패(drift 알림). 실습 계층이 없으면 건너뜀 | `terraform-plan` |
+
+- 권한 경계:
+  - plan role: `ReadOnlyAccess`에 state 읽기를 더하고, 업로드 파일(`s3:GetObject`)과 Secrets Manager 값 읽기는 거부한다. state lock을 쓰지 않는다.
+  - apply role: PowerUserAccess에 `fileshare-dev-*` 이름의 IAM만 관리할 수 있고, CI role 자신은 고칠 수 없다.
+  - OIDC subject: plan은 이 저장소의 `pull_request`와 `main`, apply는 `environment:terraform-dev`만.
+- 유지 계층(Aurora·S3·state 관련)은 CI가 apply하지 않는다. 로컬에서 plan을 검토한 뒤 apply한다.
+- secret: tfvars 두 개·state bucket 이름·role ARN 두 개. 계정 정보를 저장소에 두지 않기 위해서다.
+
+drift가 탐지되면:
+
+1. job summary의 변경 목록에서 무엇이 코드와 다른지 본다.
+2. 의도치 않은 변경(콘솔 수정, 사고)이면 코드대로 되돌린다. 실습 계층은 main에 빈 변경 없이 workflow를 수동 실행해 승인 apply하거나, 로컬에서 `terraform apply`한다.
+3. 의도한 변경이면 코드에 반영해 PR로 올린다(코드가 기준이다).
+4. drift 원인(누가·언제)은 CloudTrail에서 해당 API 이벤트로 찾는다.
+
 ### 4.2 Terraform 변수 파일 작성
 
 유지 계층을 처음 만들 때만 다음을 수행한다.
@@ -865,6 +889,39 @@ aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,Attribut
 
 중지 사유를 1시간 넘게 남기려면 EventBridge `ECS Task State Change`(STOPPED)를 로그 그룹에 저장해야 한다. 미구현이고 OPS-01 후보다.
 
+### 4.12-1 백업 복원 (OPS-02)
+
+목표: RPO 5분, RTO 1시간([DEC-020](../DECISIONS.md#결정-목록)). 2026-11-20 실측: RPO 104초, RTO 911초(15.2분)([작업일지](../worklogs/2026-11-20.md#ops-02-백업-복원)).
+
+| 대상 | 보호 장치 | 복원 방법 |
+| --- | --- | --- |
+| Aurora | 연속 백업(PITR, 보존 1일), 삭제 보호, 최종 스냅샷 | 별도 클러스터로 PITR → 검증 → 앱 전환 |
+| S3 객체 | 버전 관리 | 삭제 마커 제거 또는 이전 버전 복사 |
+| Terraform state | state bucket 버전 관리 | [state 버전 복구](#41-1-원격-state-준비-iac-01) |
+
+DB 복원 절차(운영 클러스터를 덮어쓰지 않는다):
+
+```bash
+SRC=fileshare-dev-aurora; DST=fileshare-dev-aurora-restore
+aws rds describe-db-clusters --db-cluster-identifier $SRC --query 'DBClusters[0].LatestRestorableTime'   # RPO 확인
+aws rds restore-db-cluster-to-point-in-time --source-db-cluster-identifier $SRC --db-cluster-identifier $DST \
+  --use-latest-restorable-time \           # 또는 --restore-to-time <사고 직전 시각>
+  --db-subnet-group-name <유지 계층 subnet group> --vpc-security-group-ids <Aurora SG> \
+  --serverless-v2-scaling-configuration MinCapacity=0.5,MaxCapacity=2 --no-deletion-protection \
+  --tags Key=Owner,Value=<owner> Key=Project,Value=fileshare
+aws rds create-db-instance --db-instance-identifier $DST-1 --db-cluster-identifier $DST \
+  --db-instance-class db.serverless --engine aurora-postgresql --tags Key=Owner,Value=<owner>
+```
+
+1. 클러스터(실측 약 4분)와 인스턴스(실측 약 10분)가 `available`이 되면, 일회성 ECS task(`postgres:16-alpine`, 앱 subnet·SG, 비밀번호는 같은 SSM parameter)로 복원본과 운영본의 `files` 행 수를 비교한다.
+2. 복원본의 모든 `storage_path`에 S3 객체가 있는지(`head-object`), 크기가 같은지, 표본의 해시가 ETag와 같은지 확인한다.
+3. 전환이 필요하면 앱의 `DB_URL`을 복원 endpoint로 바꾼 revision을 배포하거나, 운영 클러스터 이름을 바꾸고 복원 클러스터 이름을 원래 이름으로 바꾼다. 전환은 아직 실습하지 않았다.
+4. 검증용 클러스터는 지운다(`delete-db-instance` → `delete-db-cluster --skip-final-snapshot`). 비용이 계속 나간다.
+
+S3 객체 복원: `aws s3api list-object-versions --prefix <key>`로 삭제 마커 `VersionId`를 찾아 `delete-object --version-id <marker>`로 지운다. 덮어쓴 경우에는 이전 버전을 `copy-object --copy-source <bucket>/<key>?versionId=<id>`로 복사한다(실측 15초).
+
+한계: PITR 보존이 1일이라 하루 넘게 지난 사고는 최종 스냅샷이나 개인 계정 백업(BACKUP-01, 미구현)에 의존한다. 계정째 지워지는 위험은 계정 안 백업으로 막을 수 없다.
+
 ### 4.12 정리
 
 실습이 끝나면 비용 방지를 위해 **실습 계층만** 삭제한다.
@@ -951,27 +1008,40 @@ pull_request(main) / main push / workflow_dispatch
   -> Trivy image vulnerability scan (HIGH/CRITICAL)
 ```
 
-배포 흐름([DEC-015](../DECISIONS.md#결정-목록)):
+배포 흐름([DEC-015](../DECISIONS.md#결정-목록) 자동 배포, [DEC-017](../DECISIONS.md#결정-목록) 승격):
 
 ```text
 main push / workflow_dispatch (main)
-  -> backend test
-  -> Docker image build / Trivy scan
-  -> 검증 이미지 artifact 저장 / 배포 job에서 load
-  -> AWS OIDC role assume
-  -> ECR login
-  -> 검증 이미지 tag / ECR push (<sha>, latest)
-  -> ECS service가 ACTIVE가 아니면 종료(이미지만 push, 성공 처리)
-  -> 실행 중 task가 0개면 Aurora 깨우기(DEC-010)
-  -> 현재 ECS service의 task definition 조회
-  -> backend container image만 새 image URI로 교체
-  -> ECS service rolling deployment
+  test → image(빌드·Trivy) ─ 검증 이미지 artifact
+  publish   : OIDC → ECR push(<sha>) → digest 확인 → 실습 계층(운영·staging 서비스) 확인
+              → 운영 서비스 현재 revision을 복사하고 image를 repo@sha256:<digest>로 고정해 revision 하나 등록
+              (실습 계층이 없으면 여기서 종료: 이미지만 push, 성공 처리)
+  staging   : [environment staging] 운영 task 0개면 Aurora 깨우기 → staging 서비스에 그 revision 배포
+              → rollout 완료 대기(circuit breaker가 되돌리면 실패) → smoke(X-Deploy-Stage: staging)
+  production: [environment production, 승인 필요] 롤백 대상(현재 revision) 기록 → 같은 revision 배포
+              → smoke → 1분 뒤 배포 이후 target 5xx 확인 → 실패하면 직전 revision으로 롤백 후 실패 처리
+              → 성공하면 그 digest에 latest 태그
 ```
 
-필요한 GitHub secret:
+판단 기준과 이유:
+
+| 장치 | 무엇을 막나 | 기준 |
+| --- | --- | --- |
+| digest 고정 revision 하나 | staging에서 본 것과 다른 이미지가 운영에 가는 것 | staging·production이 같은 `taskDefinitionArn`, 같은 `sha256` |
+| staging smoke | 기능이 깨진 이미지의 승격 | 가입·로그인·업로드·검사 완료 대기·다운로드 내용 비교·삭제·삭제 후 404. 한 단계라도 다르면 실패. 요청마다 `X-Request-Id: smoke-<run>-<step>` |
+| production 승인 | 사람이 보지 않은 배포 | GitHub environment `production` required reviewer, `main`에서만 |
+| circuit breaker(rollback) | 기동·health 실패 revision이 계속 재시도되는 것 | ECS가 실패를 판정하면 직전 COMPLETED 배포로 자동 복귀 |
+| 배포 후 smoke·5xx | 기동은 되지만 기능이 깨진 배포 | smoke 실패 또는 배포 시작 이후 target 5xx > 0이면 workflow가 직전 revision으로 롤백 |
+| `concurrency: deploy-main` | 두 배포가 겹치는 것 | main 배포 파이프라인 하나씩, 진행 중인 것은 취소하지 않음 |
+
+배포 drill(CICD-03): Actions → Backend CI/CD → Run workflow에서 `fault`(`start-failure`: DB 사용자 틀림, `runtime-failure`: S3 bucket 틀림)와 `fault_target`(`staging`/`production`)을 고르면 검증된 revision의 고장 난 변형을 그 단계에만 배포한다. 운영 배포에서 쓰지 않는다.
+
+필요한 GitHub secret과 environment:
 
 ```text
-AWS_DEPLOY_ROLE_ARN
+AWS_DEPLOY_ROLE_ARN                       (Backend CI/CD)
+AWS_TF_PLAN_ROLE_ARN, AWS_TF_APPLY_ROLE_ARN, TF_STATE_BUCKET, TF_VARS_DEV_DATA, TF_VARS_DEV   (Terraform, IAC-03)
+environment: staging / production(승인자) / terraform-dev(승인자), production·terraform-dev는 main만
 ```
 
 이 값은 Terraform output으로 확인한다.
@@ -999,10 +1069,11 @@ AWS_REGION=us-east-1
 ECR_REPOSITORY=fileshare-dev-backend
 ECS_CLUSTER=fileshare-dev-ecs
 ECS_SERVICE=fileshare-dev-backend
+ECS_STAGING_SERVICE=fileshare-dev-backend-staging
 ECS_CONTAINER_NAME=backend
 ```
 
-Workflow는 Terraform apply를 실행하지 않는다. 따라서 VPC, ECR, ECS, Aurora, Redis, S3 같은 리소스 생성은 별도 Terraform 단계에서 수행한다. PR은 테스트·이미지 빌드·취약점 검사까지만 수행하고 AWS에 접근하지 않는다. `main` push와 `main` 수동 실행은 검사를 통과하면 ECR push와 ECS 배포까지 진행한다. 실습 계층이 없으면 배포 단계만 건너뛴다. 배포 job은 `concurrency: deploy-dev`로 한 번에 하나만 실행하고, 진행 중인 배포를 취소하지 않는다. 경로 필터는 `backend/**`, 이 workflow 파일, `.trivyignore.yaml`이다. 환경별 승인·이미지 승격은 CICD-02 범위다.
+Workflow는 Terraform apply를 실행하지 않는다. 따라서 VPC, ECR, ECS, Aurora, Redis, S3 같은 리소스 생성은 별도 Terraform 단계에서 수행한다. PR은 테스트·이미지 빌드·취약점 검사까지만 수행하고 AWS에 접근하지 않는다. `main` push와 `main` 수동 실행은 검사를 통과하면 ECR push와 ECS 배포까지 진행한다. 실습 계층이 없으면 배포 단계만 건너뛴다. main 배포 파이프라인은 `concurrency: deploy-main`으로 한 번에 하나만 실행하고, 진행 중인 배포를 취소하지 않는다. 경로 필터는 `backend/**`, `scripts/smoke.sh`, `scripts/ecs-deploy.sh`, 이 workflow 파일, `.trivyignore.yaml`이다.
 
 ### ECS 관리 책임과 배포 순서 (IAC-02)
 

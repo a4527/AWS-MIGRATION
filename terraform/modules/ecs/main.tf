@@ -78,6 +78,8 @@ resource "aws_lb" "application" {
   load_balancer_type = "application"
   security_groups    = [var.alb_security_group_id]
   subnets            = var.public_subnet_ids
+  # Reject requests with malformed header names instead of forwarding them (IAC-03 scan).
+  drop_invalid_header_fields = true
 
   tags = var.tags
 }
