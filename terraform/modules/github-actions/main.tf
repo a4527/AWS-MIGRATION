@@ -51,6 +51,10 @@ data "aws_iam_policy_document" "deploy" {
     sid = "AllowBackendImagePush"
     actions = [
       "ecr:BatchCheckLayerAvailability",
+      # Docker reads the manifest back after a push (HEAD /manifests); without
+      # these the push ends with 403 (2026-11-20 run 44664880316).
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
       "ecr:CompleteLayerUpload",
       "ecr:DescribeImages",
       "ecr:DescribeRepositories",
