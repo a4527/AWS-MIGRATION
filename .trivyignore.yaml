@@ -1,0 +1,16 @@
+# Trivy exceptions (CICD-01). Each entry needs a reason and an expiry; after
+# expired_at Trivy reports the finding again and the pipeline blocks.
+# Review record: docs/design/DEPLOYMENT.md#pr이미지-검증과-차단-기준-cicd-01
+vulnerabilities:
+  - id: CVE-2026-47884
+    statement: >-
+      spring-webmvc 6.2.19 XsltView SSRF/RCE. Fixed only in Spring Framework 7.0.9
+      (Spring Boot 4). The app has no XsltView, no view rendering, and no /** view
+      mapping (REST JSON only). Approved 2026-11-20; remove with the Spring Boot 4 upgrade.
+    expired_at: 2026-12-31
+  - id: CVE-2026-47890
+    statement: >-
+      spring-webmvc 6.2.19 SSE stream corruption with view fragments. Fixed only in
+      Spring Framework 7.0.9. The app has no SSE endpoints and no view fragments.
+      Approved 2026-11-20; remove with the Spring Boot 4 upgrade.
+    expired_at: 2026-12-31

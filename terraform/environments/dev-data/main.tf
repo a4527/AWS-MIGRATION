@@ -77,6 +77,56 @@ module "aurora" {
   tags                       = local.common_tags
 }
 
+# DEC-015: the deploy role and ECR live in the persistent layer so that CD can
+# authenticate, push, and detect whether the application layer is up even when
+# ../dev is destroyed, and so a recreated lab starts from the last pushed image.
+module "ecr" {
+  source = "../../modules/ecr"
+
+  name_prefix = local.name_prefix
+  repositories = {
+    backend = {
+      image_tag_mutability = "MUTABLE"
+      scan_on_push         = true
+      # Images are rebuildable artifacts; do not block a data-layer teardown.
+      force_delete = true
+    }
+  }
+  tags = local.common_tags
+}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
+locals {
+  arn_prefix = "arn:${data.aws_partition.current.partition}"
+  account_id = data.aws_caller_identity.current.account_id
+
+  # Names created by ../dev (modules/ecs). Built here because that layer may not exist.
+  ecs_cluster_arn        = "${local.arn_prefix}:ecs:${var.aws_region}:${local.account_id}:cluster/${local.name_prefix}-ecs"
+  ecs_service_arn        = "${local.arn_prefix}:ecs:${var.aws_region}:${local.account_id}:service/${local.name_prefix}-ecs/${local.name_prefix}-backend"
+  ecs_task_role_arn      = "${local.arn_prefix}:iam::${local.account_id}:role/${local.name_prefix}-ecs-task"
+  ecs_execution_role_arn = "${local.arn_prefix}:iam::${local.account_id}:role/${local.name_prefix}-ecs-execution"
+}
+
+module "github_actions" {
+  source = "../../modules/github-actions"
+
+  name_prefix                 = local.name_prefix
+  github_repository           = var.github_repository
+  github_branch               = var.github_branch
+  github_oidc_thumbprints     = var.github_oidc_thumbprints
+  ecr_repository_arn          = module.ecr.repository_arns["backend"]
+  ecs_cluster_arn             = local.ecs_cluster_arn
+  ecs_service_arn             = local.ecs_service_arn
+  ecs_task_role_arn           = local.ecs_task_role_arn
+  ecs_execution_role_arn      = local.ecs_execution_role_arn
+  aurora_cluster_arn          = module.aurora.cluster_arn
+  aurora_instance_arn_pattern = "${local.arn_prefix}:rds:${var.aws_region}:${local.account_id}:db:${local.name_prefix}-aurora-*"
+  tags                        = local.common_tags
+}
+
 # Account cost guard (PORT-01). Kept in the persistent layer so it survives lab teardown.
 resource "aws_budgets_budget" "monthly" {
   name         = "${local.name_prefix}-monthly"

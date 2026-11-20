@@ -155,6 +155,23 @@ variable "budget_alert_thresholds" {
   default     = [50, 80, 100]
 }
 
+variable "github_repository" {
+  description = "GitHub repository allowed to deploy through OIDC, in owner/repo format."
+  type        = string
+}
+
+variable "github_branch" {
+  description = "GitHub branch allowed to deploy through OIDC."
+  type        = string
+  default     = "main"
+}
+
+variable "github_oidc_thumbprints" {
+  description = "Thumbprints for the GitHub Actions OIDC provider."
+  type        = list(string)
+  default     = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+}
+
 variable "budget_filter_by_owner_tag" {
   description = "Count only costs tagged Owner=var.owner. Requires Owner to be an active cost allocation tag; otherwise the budget stays at 0."
   type        = bool

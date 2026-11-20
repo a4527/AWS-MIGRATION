@@ -135,7 +135,7 @@ S3_OBJECT_PREFIX=files/
 
 AWS 리소스 생성, GitHub Actions 배포, 기능 확인, 정리 절차를 순서대로 실행하는 런북이다. PORT-01에서 계정·예산·정리 조건을 확정한 뒤에만 실행한다. 대상 구성은 현재 Terraform 그대로다([DEC-004](../DECISIONS.md#결정-목록)).
 
-Terraform은 유지 계층(`dev-data`: VPC·S3·Aurora)과 실습 계층(`dev`: NAT·ALB·ECS·ECR·Lambda·Redis 등)으로 나뉜다([DEC-008](../DECISIONS.md#결정-목록), [계층 설명](AWS.md#유지-계층과-실습-계층)). 유지 계층은 한 번 만들고 남겨 두며, 실습이 끝나면 실습 계층만 `terraform destroy`로 정리한다.
+Terraform은 유지 계층(`dev-data`: VPC·S3·Aurora·ECR·GitHub Actions 배포 role)과 실습 계층(`dev`: NAT·ALB·ECS·Lambda·Redis 등)으로 나뉜다([DEC-008](../DECISIONS.md#결정-목록), [계층 설명](AWS.md#유지-계층과-실습-계층)). 유지 계층은 한 번 만들고 남겨 두며, 실습이 끝나면 실습 계층만 `terraform destroy`로 정리한다.
 
 ### 4.0 사전 준비
 
@@ -356,11 +356,9 @@ NAT Gateway / EIP / private 기본 경로
 Aurora SG의 5432 from application SG 규칙
 ALB / target group
 ACM certificate / Route53 records, when domain variables are set
-ECR repository
-ECS cluster / service / task definition
+ECS cluster / service / task definition (이미지는 유지 계층 ECR의 `latest`)
 ElastiCache Redis
 IAM roles / policies
-GitHub Actions OIDC provider / deploy role
 Lambda file processor
 S3 bucket notification
 CloudWatch log groups / alarms
@@ -390,7 +388,7 @@ aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=file
 
 태깅 API 결과에는 이미 삭제한 리소스(예: 이전 실습의 subnet)가 한동안 남고, Aurora cluster는 이름 ARN과 리소스 ID ARN 두 개로 나온다. 개수는 `describe-subnets` 등 서비스 API로 대조한다.
 
-실습 계층을 다시 만들면 ECR repository도 새로 생기므로 이미지를 다시 push해야 한다(4.6). GitHub Actions deploy role은 같은 이름으로 다시 만들어져 ARN이 같으므로 secret은 그대로 쓸 수 있다.
+ECR과 GitHub Actions 배포 role은 유지 계층에 있다([DEC-015](../DECISIONS.md#결정-목록)). 실습 계층을 다시 만들면 ECS가 ECR의 `latest`(main에서 마지막으로 검사를 통과한 이미지)로 바로 뜬다. 첫 apply 전에 `latest`가 없으면 task의 이미지 pull이 실패하므로, 먼저 main에서 workflow를 한 번 실행해 이미지를 올린다. Aurora가 일시정지돼 있으면 첫 task가 DB 연결 실패로 종료될 수 있으므로 apply 직전에 [DB를 깨운다](#46-github-actions-배포-실행).
 
 완료 후 output을 확인한다.
 
@@ -437,24 +435,16 @@ Secret 이름:
 AWS_DEPLOY_ROLE_ARN
 ```
 
-Secret 값:
+Secret 값(`dev-data`의 output, 유지 계층에 있어 실습 계층을 다시 만들어도 바뀌지 않는다):
 
-```text
-terraform output -raw github_actions_deploy_role_arn 결과값
+```bash
+cd terraform/environments/dev-data
+terraform output -raw github_actions_deploy_role_arn | gh secret set AWS_DEPLOY_ROLE_ARN --repo <owner>/<repo>
 ```
 
 ### 4.6 GitHub Actions 배포 실행
 
-GitHub repository에서 workflow를 수동 실행한다.
-
-```text
-Repository
--> Actions
--> Backend CI/CD
--> Run workflow
--> Branch: main
--> Run workflow
-```
+`main`에 backend 변경이 push(PR 머지 포함)되면 자동으로 배포한다([DEC-015](../DECISIONS.md#결정-목록)). 코드 변경 없이 다시 배포하려면 Actions → Backend CI/CD → Run workflow(Branch: main)로 수동 실행한다.
 
 Workflow가 수행하는 작업:
 
@@ -464,7 +454,9 @@ Docker image build / Trivy scan
 검증 이미지 artifact 저장 / load
 AWS OIDC role assume
 ECR login
-검증 이미지 tag / ECR push
+검증 이미지 tag / ECR push (`<sha>`, `latest`)
+ECS service 상태 확인 (ACTIVE가 아니면 배포를 건너뛰고 성공 처리)
+실행 중인 task가 0개면 Aurora 깨우기
 현재 ECS service task definition 조회
 backend container image 교체
 새 task definition revision 등록
@@ -795,7 +787,7 @@ Aurora final snapshot 설정
 force_destroy_buckets = true
 ```
 
-dev ECR repository는 Terraform에서 `force_delete = true`로 설정되어 있어 repository 삭제 시 남아 있는 image도 함께 삭제된다. 운영 환경에서는 image 보존 정책을 먼저 정하고 `force_delete` 사용 여부를 별도로 검토한다.
+ECR repository는 유지 계층에 있어 실습 계층 destroy로 지워지지 않는다. 유지 계층을 지울 때는 `force_delete = true`라 남은 image도 함께 삭제된다(이미지는 다시 빌드할 수 있는 산출물). lifecycle 정책이 최근 20개만 남긴다. 운영 환경에서는 image 보존 정책을 먼저 정하고 `force_delete` 사용 여부를 별도로 검토한다.
 
 ### 4.13 비용 주의
 
@@ -837,7 +829,7 @@ dev terraform destroy
 
 ## 5. CI/CD
 
-CI/CD는 AWS 리소스를 새로 생성하지 않는다. Terraform으로 생성된 ECR repository와 ECS service를 대상으로 backend image를 빌드, 푸시, 배포한다.
+CI/CD는 AWS 리소스를 새로 생성하지 않는다. Terraform으로 생성된 ECR repository(유지 계층)와 ECS service(실습 계층)를 대상으로 backend image를 빌드, 푸시, 배포한다.
 
 GitHub Actions workflow:
 
@@ -854,16 +846,18 @@ pull_request(main) / main push / workflow_dispatch
   -> Trivy image vulnerability scan (HIGH/CRITICAL)
 ```
 
-배포 흐름:
+배포 흐름([DEC-015](../DECISIONS.md#결정-목록)):
 
 ```text
-workflow_dispatch (main)
+main push / workflow_dispatch (main)
   -> backend test
   -> Docker image build / Trivy scan
   -> 검증 이미지 artifact 저장 / 배포 job에서 load
   -> AWS OIDC role assume
   -> ECR login
-  -> 검증 이미지 tag / ECR push
+  -> 검증 이미지 tag / ECR push (<sha>, latest)
+  -> ECS service가 ACTIVE가 아니면 종료(이미지만 push, 성공 처리)
+  -> 실행 중 task가 0개면 Aurora 깨우기(DEC-010)
   -> 현재 ECS service의 task definition 조회
   -> backend container image만 새 image URI로 교체
   -> ECS service rolling deployment
@@ -878,7 +872,7 @@ AWS_DEPLOY_ROLE_ARN
 이 값은 Terraform output으로 확인한다.
 
 ```bash
-cd terraform/environments/dev
+cd terraform/environments/dev-data
 terraform output github_actions_deploy_role_arn
 ```
 
@@ -890,6 +884,7 @@ GitHub Actions deploy role
 ECR push policy
 ECS service deploy policy
 iam:PassRole policy for ECS task roles
+RDS 읽기(깨우기용 DescribeDBClusters·DescribeDBLogFiles·DescribeEvents)
 ```
 
 기본 배포 대상:
@@ -902,7 +897,7 @@ ECS_SERVICE=fileshare-dev-backend
 ECS_CONTAINER_NAME=backend
 ```
 
-Workflow는 Terraform apply를 실행하지 않는다. 따라서 VPC, ECR, ECS, Aurora, Redis, S3 같은 리소스 생성은 별도 Terraform 단계에서 수행한다. PR과 `main` push는 테스트·이미지 빌드·취약점 검사까지 수행하고, ECR push와 ECS 배포는 `main`의 수동 실행에서만 진행한다. 경로 필터는 `backend/**`와 이 workflow 파일이다.
+Workflow는 Terraform apply를 실행하지 않는다. 따라서 VPC, ECR, ECS, Aurora, Redis, S3 같은 리소스 생성은 별도 Terraform 단계에서 수행한다. PR은 테스트·이미지 빌드·취약점 검사까지만 수행하고 AWS에 접근하지 않는다. `main` push와 `main` 수동 실행은 검사를 통과하면 ECR push와 ECS 배포까지 진행한다. 실습 계층이 없으면 배포 단계만 건너뛴다. 배포 job은 `concurrency: deploy-dev`로 한 번에 하나만 실행하고, 진행 중인 배포를 취소하지 않는다. 경로 필터는 `backend/**`, 이 workflow 파일, `.trivyignore.yaml`이다. 환경별 승인·이미지 승격은 CICD-02 범위다.
 
 ### ECS 관리 책임과 배포 순서 (IAC-02)
 
@@ -919,7 +914,7 @@ Service의 `lifecycle.ignore_changes`는 `task_definition`과 `desired_count`에
 
 1. PORT-01의 환경·예산·정리 조건을 먼저 확정한다. Terraform으로 ECR·ECS와 task definition 템플릿을 생성한다. 초기 task 수는 scaling min/max 범위 안에 둔다. 예를 들어 1 task 실습이면 `ecs_desired_count`와 `ecs_min_capacity`를 모두 1로 설정한다.
 2. ECR에 초기 이미지가 없으면 task의 이미지 pull이 실패할 수 있다. 이 상태는 배포 성공으로 기록하지 않는다. Service 생성 후 workflow가 서비스의 최초 task definition을 읽을 수 있는지 확인한다.
-3. OIDC role secret을 등록하고 main의 Backend CI/CD를 실행한다. 검사를 통과한 이미지를 ECR에 push하고 새 revision을 service에 배포한다. Service 안정화·ALB health와 기능 smoke 결과를 확인한다. 검사 실패 시 차단 원인을 해결한 뒤 다시 실행한다.
+3. OIDC role secret을 등록하고 main의 Backend CI/CD를 실행한다(main push 시 자동). 검사를 통과한 이미지를 ECR에 push하고 새 revision을 service에 배포한다. Service 안정화·ALB health와 기능 smoke 결과를 확인한다. 검사 실패 시 차단 원인을 해결한 뒤 다시 실행한다.
 
 CPU·메모리·환경변수·role 등 task definition 설정을 바꿀 때는 Terraform apply로 템플릿을 갱신한 후 **설정 배포를 별도로 수행**한다. 현재 workflow는 실행 중인 revision을 복제하므로 workflow 재실행만으로 템플릿 변경이 전달되지 않는다.
 
@@ -928,7 +923,7 @@ CPU·메모리·환경변수·role 등 task definition 설정을 바꿀 때는 T
 3. 해당 ARN의 task definition을 조회해 등록 가능한 필드만 사용하고 backend image를 현재 검증된 이미지로 교체한다. 새 revision을 등록하고 설정 차이를 검토한 뒤 service에 명시적으로 배포한다. 비밀값은 `secrets`의 SSM ARN으로만 들어 있지만, 내부 endpoint 등 구성 정보가 있으므로 JSON 원문을 artifact·문서에 남기지 않는다.
 4. 안정화·health·기능 smoke를 확인하고 실패하면 보존한 정상 revision으로 service를 되돌린다. 이 수동 설정 배포·롤백은 CICD-02/03의 자동화·실행 검증 완료를 뜻하지 않는다.
 
-실습 계층(`dev`)을 destroy했다가 다시 apply하면 ECR·ECS service가 새로 만들어지므로([DEC-008](../DECISIONS.md#결정-목록)) 매번 위 최초 배포 순서를 따른다. 이전 실습의 revision·task 수는 이어지지 않는다.
+실습 계층(`dev`)을 destroy했다가 다시 apply하면 ECS service가 새로 만들어지므로([DEC-008](../DECISIONS.md#결정-목록)) 매번 위 최초 배포 순서를 따른다. ECR은 유지 계층에 있어 이미지가 남는다([DEC-015](../DECISIONS.md#결정-목록)). 이전 실습의 revision·task 수는 이어지지 않는다.
 
 Service를 삭제·재생성하면 ignore 규칙에도 불구하고 Terraform 템플릿과 초기 task 수가 다시 사용된다. 교체 plan은 현재 배포 이미지·설정·task 수와 비교하고 복구용 이미지 존재를 확인한 뒤 실행한다. 인프라 설정이 현재 task와 호환되지 않는 변경은 템플릿 생성만으로 완료 처리하지 않는다.
 
@@ -945,9 +940,9 @@ AWS 실행 확인은 PORT-01 이후 다음 순서로 수행하고 실제 revisio
 
 - `test` → `image` → `deploy` 순서다. 테스트·이미지 빌드·검사 실패 시 뒤 job을 실행하지 않는다. 검사 도구나 DB 다운로드 실패도 통과로 처리하지 않는다.
 - Trivy는 OS와 애플리케이션 패키지의 HIGH/CRITICAL 취약점을 수정 버전 유무와 관계없이 차단한다. `exit-code: 1`, `ignore-unfixed: false`를 사용하며 자동 예외·실패 무시는 두지 않는다. LOW/MEDIUM은 이 차단 범위 밖이다. 도구 설정은 [Trivy 공식 안내](https://github.com/aquasecurity/trivy-action#usage)를 따른다.
-- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 현재 허용한 예외는 없다. 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
+- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 허용한 예외는 저장소 루트 `.trivyignore.yaml`에 CVE별 사유·만료일(`expired_at`)과 함께 둔다. 만료일이 지나면 Trivy가 다시 차단한다. 현재 예외: CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19, 수정은 Spring Framework 7/Spring Boot 4에만 있음, 앱이 XsltView·SSE·view fragment를 쓰지 않음, 2026-11-20 승인, 만료 2026-12-31, 해제 작업 SEC-02). 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
 - PR은 `pull_request`로 실행한다. 기본 권한은 `contents: read`이며 AWS secret을 참조하지 않는다. `id-token: write`와 AWS role 참조는 배포 job에만 둔다. [GitHub job 권한 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idpermissions)을 따른다.
-- `main` 수동 실행은 검사한 Docker 이미지를 1일 보존 artifact로 넘겨 배포 job에서 다시 빌드하지 않는다. 환경 간 digest 승격·승인은 CICD-02에서 검증한다.
+- `main` push·수동 실행은 검사한 Docker 이미지를 1일 보존 artifact로 넘겨 배포 job에서 다시 빌드하지 않는다. 환경 간 digest 승격·승인은 CICD-02에서 검증한다.
 - 병합 차단을 보장하려면 저장소 ruleset/branch protection에서 `Test backend`, `Build and scan backend image`를 필수 검사로 등록해야 한다. 경로 필터로 workflow가 생략되는 문서 전용 PR의 처리도 함께 검토한다. 이번 로컬 수정으로 원격 저장소 설정을 바꾸지는 않았다.
 
 실행 확인은 정상 PR과 테스트 실패·이미지 빌드 실패·HIGH/CRITICAL 검출 PR에서 각각 수행한다. 실패 시 `deploy`가 실행되지 않는지, PR job에 OIDC·AWS secret이 전달되지 않는지 확인하고 실제 run 링크를 작업일지에 남긴다. 정적 workflow 검사는 이 실행 증빙을 대신하지 않는다.

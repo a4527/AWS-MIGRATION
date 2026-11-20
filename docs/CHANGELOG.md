@@ -1,5 +1,11 @@
 사용자 기능·동작 변경을 기록한다. 확인 가능한 릴리스별 변경 근거가 없어 과거 이력을 소급 작성하지 않았다. 문서 정리와 작업 등록의 수행 근거는 [작업일지](worklogs/2026-11-16.md), 현재 범위는 [PROGRESS](PROGRESS.md)를 따른다.
 
+## 2026-11-20 (미배포)
+
+- 백엔드 의존성을 보안 패치 버전으로 올렸다(Spring Boot 3.3.7 → 3.5.16, Tomcat 10.1.62, Netty 4.1.141, Jackson 2.21.8, PostgreSQL JDBC 42.7.14, MinIO 8.6.0, AWS SDK 2.59.5 등). API 동작은 바뀌지 않았다.
+- 10MiB를 넘는 업로드가 새 Tomcat에서 `FILE_TOO_LARGE` 응답 대신 연결 끊김으로 실패하지 않도록 Tomcat 본문 버림 한도를 multipart 요청 한도에 맞췄다.
+- 근거: [작업일지](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정)
+
 ## 2026-11-17 (미배포)
 
 - `POST /api/files`가 선택 헤더 `Idempotency-Key`를 받는다. 같은 키로 다시 보내면 파일을 새로 만들지 않고 첫 결과를 `Idempotent-Replayed: true`와 함께 돌려준다. 새 오류 코드 `IDEMPOTENCY_IN_PROGRESS`(409), `IDEMPOTENCY_KEY_MISMATCH`(422)를 추가했다.

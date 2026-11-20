@@ -56,20 +56,6 @@ resource "aws_acm_certificate_validation" "application" {
   validation_record_fqdns = [for record in aws_route53_record.certificate_validation : record.fqdn]
 }
 
-module "ecr" {
-  source = "../../modules/ecr"
-
-  name_prefix = local.name_prefix
-  repositories = {
-    backend = {
-      image_tag_mutability = "MUTABLE"
-      scan_on_push         = true
-      force_delete         = true
-    }
-  }
-  tags = local.common_tags
-}
-
 module "nat" {
   source = "../../modules/nat"
 
@@ -140,7 +126,7 @@ module "ecs" {
   private_subnet_ids              = local.private_subnet_ids
   alb_security_group_id           = module.security_groups.alb_security_group_id
   application_security_group_id   = module.security_groups.application_security_group_id
-  container_image                 = "${module.ecr.repository_urls["backend"]}:${var.ecs_backend_image_tag}"
+  container_image                 = "${data.aws_ecr_repository.backend.repository_url}:${var.ecs_backend_image_tag}"
   container_port                  = var.ecs_container_port
   cpu                             = var.ecs_task_cpu
   memory                          = var.ecs_task_memory
@@ -180,21 +166,6 @@ resource "aws_route53_record" "application" {
     name                   = module.ecs.alb_dns_name
     zone_id                = module.ecs.alb_zone_id
   }
-}
-
-module "github_actions" {
-  source = "../../modules/github-actions"
-
-  name_prefix             = local.name_prefix
-  github_repository       = var.github_repository
-  github_branch           = var.github_branch
-  github_oidc_thumbprints = var.github_oidc_thumbprints
-  ecr_repository_arn      = module.ecr.repository_arns["backend"]
-  ecs_cluster_arn         = module.ecs.cluster_arn
-  ecs_service_arn         = module.ecs.service_arn
-  ecs_task_role_arn       = module.ecs.task_role_arn
-  ecs_execution_role_arn  = module.ecs.execution_role_arn
-  tags                    = local.common_tags
 }
 
 module "elasticache" {

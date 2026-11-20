@@ -24,6 +24,10 @@ aurora_seconds_until_auto_pause = 300
 aurora_deletion_protection      = true
 aurora_skip_final_snapshot      = false
 
+# CD (DEC-015). The deploy role trusts only this repository and branch.
+github_repository = "replace-with-github-owner/aws-migration-project"
+github_branch     = "main"
+
 # Monthly budget (PORT-01). Put real addresses only in terraform.tfvars.
 budget_limit_usd           = 10
 budget_alert_emails        = ["replace-with-alert-email@example.com"]

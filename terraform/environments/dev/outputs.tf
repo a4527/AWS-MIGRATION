@@ -20,7 +20,7 @@ output "database_subnet_ids" {
 
 output "backend_ecr_repository_url" {
   description = "ECR repository URL for the Spring Boot backend image."
-  value       = module.ecr.repository_urls["backend"]
+  value       = data.aws_ecr_repository.backend.repository_url
 }
 
 output "file_bucket_name" {
@@ -51,11 +51,6 @@ output "ecs_cluster_name" {
 output "ecs_service_name" {
   description = "ECS backend service name."
   value       = module.ecs.service_name
-}
-
-output "github_actions_deploy_role_arn" {
-  description = "IAM role ARN to store as the GitHub Actions AWS_DEPLOY_ROLE_ARN secret."
-  value       = module.github_actions.deploy_role_arn
 }
 
 output "application_role_arn" {

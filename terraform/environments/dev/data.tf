@@ -58,6 +58,11 @@ data "aws_rds_cluster" "this" {
   cluster_identifier = "${local.name_prefix}-aurora"
 }
 
+# DEC-015: ECR is in the data layer so images survive lab teardown.
+data "aws_ecr_repository" "backend" {
+  name = "${local.name_prefix}-backend"
+}
+
 data "aws_caller_identity" "current" {}
 
 data "aws_partition" "current" {}

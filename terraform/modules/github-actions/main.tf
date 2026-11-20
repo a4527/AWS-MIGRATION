@@ -108,6 +108,26 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
 
+  # DEC-010: listing the writer's log files resumes a paused Aurora instance
+  # before the first task starts. Read-only; no connection or data access.
+  statement {
+    sid = "AllowAuroraWake"
+    actions = [
+      "rds:DescribeDBClusters",
+      "rds:DescribeDBLogFiles",
+    ]
+    resources = [
+      var.aurora_cluster_arn,
+      var.aurora_instance_arn_pattern,
+    ]
+  }
+
+  statement {
+    sid       = "AllowAuroraEvents"
+    actions   = ["rds:DescribeEvents"]
+    resources = ["*"]
+  }
+
   statement {
     sid = "AllowPassEcsTaskRoles"
     actions = [

@@ -11,8 +11,6 @@ file_bucket_name = "replace-with-globally-unique-fileshare-dev-bucket"
 # JWT secret is generated into SSM here (SEC-01). Increase to rotate the JWT secret.
 app_jwt_secret_version = 1
 
-github_repository = "replace-with-github-owner/aws-migration-project"
-github_branch     = "main"
 
 ecs_backend_image_tag = "latest"
 ecs_task_cpu          = 512

@@ -135,8 +135,10 @@ curl -i http://localhost:8080/actuator/health
   - 필요하면 `.env` 또는 Compose 환경변수의 `APP_FILE_MAX_SIZE_BYTES`, `APP_FILE_ALLOWED_EXTENSIONS`를 조정한다.
   - Nginx `client_max_body_size`도 Spring 업로드 제한과 맞춘다.
   - `APP_FILE_MAX_SIZE_BYTES`는 Spring multipart 한도(`spring.servlet.multipart.max-file-size`)에도 쓰인다. 요청 전체 한도는 `APP_MULTIPART_MAX_REQUEST_BYTES`(기본 11MiB)다. 2026-11-17 이전 코드는 multipart 한도가 Spring 기본값 1MB여서 1MB를 넘는 업로드가 500으로 실패했다.
+- 한도를 넘는 업로드에 응답 대신 `Broken pipe`·`Error writing request body to server`·연결 끊김이 오는 경우: Tomcat이 오류 응답 뒤 남은 본문을 `server.tomcat.max-swallow-size`(기본 2MB)보다 많이 읽어야 하면 연결을 닫는다. 2026-11-20 Spring Boot 3.5 업그레이드 뒤 `UploadSizeLimitIntegrationTests`(10.5MB 업로드)에서 재현했다. 클라이언트(JDK·Apache HttpClient 5)와 무관했다. `max-swallow-size`를 multipart 요청 한도(`APP_MULTIPART_MAX_REQUEST_BYTES`)로 맞춰 해결했다. 무제한(-1)은 큰 본문을 끝까지 읽으므로 쓰지 않는다([작업일지](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정)).
 - 재발 방지 체크리스트:
   - 운영 변경 시 Spring 설정과 Nginx 설정의 업로드 제한을 함께 조정한다.
+  - Spring Boot·Tomcat 버전을 올리면 `UploadSizeLimitIntegrationTests`로 한도 초과 응답을 확인한다.
 
 ## 인증 토큰 오류
 

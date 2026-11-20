@@ -7,7 +7,7 @@ terraform/
 ├── bootstrap/      # 원격 state용 S3 bucket (로컬 state, 처음 한 번)
 ├── environments/
 │   ├── dev-data/   # 유지 계층: VPC, S3, Aurora (계속 유지)
-│   └── dev/        # 실습 계층: NAT, ALB/ECS, ECR, Lambda, Redis (실습마다 apply/destroy)
+│   └── dev/        # 실습 계층: NAT, ALB/ECS, Lambda, Redis (실습마다 apply/destroy)
 │       ├── backend.tf            # S3 backend (bucket은 backend.hcl)
 │       ├── backend.hcl.example
 │       ├── data.tf
@@ -105,8 +105,7 @@ terraform destroy                       # 실습 종료 시 dev만
 - `ecs_task_memory`: Fargate task memory
 - `ecs_desired_count`: ECS service 생성 시 task 수. 생성 후에는 Auto Scaling이 관리
 - `app_jwt_secret_version`: 실습 계층. 올리면 JWT secret을 새로 만들어 SSM에 쓴다
-- `github_repository`: GitHub Actions OIDC assume을 허용할 repository
-- `github_branch`: GitHub Actions OIDC assume을 허용할 branch
+- `github_repository`·`github_branch`: 유지 계층. GitHub Actions OIDC assume을 허용할 repository·branch([DEC-015](../docs/DECISIONS.md#결정-목록))
 - `aurora_master_password_version`: 유지 계층. 올리면 Aurora 비밀번호를 새로 만들어 Aurora와 SSM에 쓴다
 
 비밀값은 tfvars에 넣지 않는다. Terraform이 apply 중에 만들어 write-only 인자로 Aurora·SSM에만 보내고, ECS는 `secrets`로 SSM에서 읽는다([비밀값 관리](../docs/design/DEPLOYMENT.md#42-1-비밀값-관리-sec-01), [DEC-013](../docs/DECISIONS.md#결정-목록)).

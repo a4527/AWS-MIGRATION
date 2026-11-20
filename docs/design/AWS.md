@@ -98,8 +98,8 @@ terraform/
 
 | 계층 | 디렉터리 | 리소스 | 수명 | 쉬는 동안 비용 |
 | --- | --- | --- | --- | --- |
-| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지(현재 규모 몇 센트). VPC·subnet·IGW·SG는 무료 |
-| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·ECR·IAM·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, GitHub Actions role | 실습마다 apply → destroy | 없음 |
+| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
+| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, SSM JWT secret | 실습마다 apply → destroy | 없음 |
 
 - Aurora는 `min_capacity = 0`이라 연결이 없으면 `seconds_until_auto_pause`(기본 300초) 뒤 컴퓨트를 멈춘다. 멈춘 동안은 스토리지만 과금되고, 첫 연결에서 다시 깨어나는 데 약 15초가 걸린다(AWS 설명 기준, 실측 전). ECS가 떠 있는 동안은 연결 풀이 연결을 유지하므로 멈추지 않는다.
 - 실습 계층은 유지 계층 리소스를 state가 아니라 이름·태그로 조회한다(`dev/data.tf`). 그래서 IAC-01에서 backend를 S3로 바꿨어도 계층 간 연결은 그대로다. state는 `terraform/bootstrap`이 만든 bucket에 계층별 key로 있고 S3 자체 잠금을 쓴다([DEC-011](../DECISIONS.md#결정-목록)).
@@ -156,7 +156,7 @@ data.aws_s3_bucket.files.arn
   -> S3 bucket notification
 ```
 
-ECR과 ECS 모듈의 output은 GitHub Actions 모듈에도 전달된다. 이 모듈은 CI/CD가 ECR에 image를 push하고 ECS service를 업데이트할 수 있는 deploy role을 만든다.
+ECR과 GitHub Actions 모듈은 유지 계층에 있다([DEC-015](../DECISIONS.md#결정-목록)). GitHub Actions 모듈은 CI/CD가 ECR에 image를 push하고 ECS service를 업데이트할 수 있는 deploy role을 만든다. ECS cluster·service·role ARN은 실습 계층이 없을 때도 정책을 만들 수 있도록 이름 규칙으로 만든다. 실습 계층은 ECR을 이름으로 조회한다.
 
 ```text
 module.ecr.repository_arns["backend"]

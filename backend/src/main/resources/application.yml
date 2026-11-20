@@ -23,6 +23,11 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  tomcat:
+    # 한도 초과 업로드 뒤 남은 본문을 이만큼 읽어 버리고 400 FILE_TOO_LARGE를 돌려준다. 이보다 작으면
+    # Tomcat이 응답 전에 연결을 닫아 클라이언트가 Broken pipe를 받는다(Spring Boot 3.5 업그레이드 때 확인).
+    # 무제한(-1)은 큰 본문을 끝까지 읽게 되므로 multipart 요청 한도에 맞춘다.
+    max-swallow-size: ${APP_MULTIPART_MAX_REQUEST_BYTES:11534336}
 
 management:
   endpoints:

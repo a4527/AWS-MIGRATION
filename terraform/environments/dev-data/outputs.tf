@@ -48,6 +48,16 @@ output "aurora_security_group_id" {
   value       = module.aurora.security_group_id
 }
 
+output "backend_ecr_repository_url" {
+  description = "ECR repository URL for the backend image (kept between labs)."
+  value       = module.ecr.repository_urls["backend"]
+}
+
+output "github_actions_deploy_role_arn" {
+  description = "IAM role ARN to store as the GitHub Actions AWS_DEPLOY_ROLE_ARN secret."
+  value       = module.github_actions.deploy_role_arn
+}
+
 output "budget_name" {
   description = "AWS Budgets budget name."
   value       = aws_budgets_budget.monthly.name
