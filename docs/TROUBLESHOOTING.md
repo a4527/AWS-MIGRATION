@@ -216,3 +216,13 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 - 원인: 검사가 `plan -refresh-only`(state와 실제 비교)였다. 실습 계층은 유지 계층의 Aurora 보안 그룹에 ingress 규칙(`aws_security_group_rule`)을, private route table에 NAT 경로(`aws_route`)를 별도 리소스로 더한다. 유지 계층 state는 마지막 refresh 때 본 inline `ingress`·`route` 값을 기억하므로, 실습 계층을 올리거나 내릴 때마다 이 값이 "밖에서 바뀜"으로 나온다. 유지 계층 코드는 이 속성을 선언하지 않아 일반 plan은 변경이 없다.
 - 해결 방법: drift 검사를 일반 `plan -detailed-exitcode`(코드와 실제 비교)로 바꿨다. 코드가 관리하는 속성이 바뀌면 여전히 적용할 변경으로 잡히고, 다른 계층이 관리하는 규칙은 무시된다. 바뀐 리소스 목록은 실행 요약과 job 로그에 함께 남긴다.
 - 재검증 방법·결과: 2026-11-23 로컬에서 `-refresh-only`는 exit 2(보안 그룹 ingress 1개, route 1개 제거로 표시), 일반 plan은 exit 0. 수정 머지 후 workflow를 수동 실행해 drift job이 통과하는지 확인한다.
+
+## drift 검사가 별도 리소스로 붙인 보안 그룹 규칙을 잡지 못함
+
+- 증상: 콘솔에서 Aurora 보안 그룹(`fileshare-dev-aurora`)에 ingress 규칙을 추가해도 정기 drift 검사가 통과한다. route table에 경로를 추가해도 마찬가지다.
+- 원인: 일반 `plan`은 코드에 값을 적은 속성만 비교한다. 유지 계층 코드는 보안 그룹의 `name`·`description`·`vpc_id`·`tags`만 적고, `ingress`는 실습 계층이 `aws_security_group_rule`이라는 별도 리소스로 붙인다(`terraform/modules/aurora/main.tf`). route table의 `route`도 실습 계층 `aws_route`가 관리한다(`terraform/modules/nat/main.tf`). 그래서 유지 계층 plan에서는 ingress·route가 관리 대상이 아니다. 실습 계층 plan은 자기가 만든 규칙만 확인한다. 결과적으로 누구도 소유하지 않은 규칙은 어느 계층에서도 drift로 잡히지 않는다.
+  - `-refresh-only`로 되돌리면 이 변경도 보고되지만, 실습 계층을 올리고 내릴 때마다 오탐이 난다([정기 drift 검사가 유지 계층에서 매일 실패함](#정기-drift-검사가-유지-계층에서-매일-실패함)).
+  - 보안 그룹에 inline `ingress`를 적어 유지 계층이 소유하게 하면, 별도 리소스 규칙과 충돌해 두 계층이 서로 규칙을 지우게 된다.
+- 해결 방법: Terraform drift 검사로는 메우지 않는다. 대신 API 호출 자체를 감시한다. CloudTrail 관리 이벤트(`AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`, `CreateRoute`, `ReplaceRoute` 등)를 EventBridge 규칙으로 받아, Terraform CI·배포 role이 아닌 주체의 호출이면 SNS로 알린다. 후속 작업 [SEC-03](TASKS.md)으로 등록했다.
+- 임시 확인: 그전까지는 CloudTrail 이벤트 기록에서 이벤트 이름 `AuthorizeSecurityGroupIngress`로 필터해 호출 주체와 시각을 확인한다.
+- 재검증 방법·결과: SEC-03 구현 후 콘솔에서 임시 규칙을 추가해 알림 수신을 확인하고 규칙을 지운다. 아직 미수행.
