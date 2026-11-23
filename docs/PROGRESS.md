@@ -1,4 +1,4 @@
-기준일: 2026-11-20 (Asia/Seoul).
+기준일: 2026-11-23 (Asia/Seoul).
 
 ## 현재 단계
 
@@ -23,18 +23,19 @@
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
 | AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
+| 개인 계정 백업(BACKUP-01) | S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. 복원은 OPS-02 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
 | GitHub Actions | actionlint, 로컬 Trivy(2026-11-23 Spring Boot 4 전환 후 예외 없이 0건), 테스트 67개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
 
 1. 다음 실습: 실습 계층 apply → Spring Boot 4 이미지 배포 확인(SEC-02) → CICD-03 drill B(production 런타임 실패 → 자동 롤백)·배포 실패 이메일 → IAC-03 drift 주입 시험 → PERF-01 기준선·확장 비교 → 화면 캡처([목록](PORTFOLIO.md#화면-캡처-목록)).
-2. BACKUP-01: 개인 계정 백업.
-3. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
+2. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-23: BACKUP-01. 부트캠프 file bucket을 개인 계정 bucket으로 복제하고(삭제 미복제), 실습 종료 전 `scripts/db-backup.sh`로 DB dump를 같은 경로로 보낸다(DEC-022). 부하 시험 데이터(파일 1,675개, 260MB)를 정리했다. Aurora가 11-20 밤 외부 요인으로 정지돼 있던 것을 발견해 다시 시작했다.
 - 2026-11-23: SEC-03. Aurora SG·route table을 Terraform CI 밖에서 바꾸면 CloudTrail → EventBridge → SNS로 1분 안에 알린다(DEC-021). 유지 계층에 trail을 추가했다.
 - 2026-11-23: SEC-02. Spring Boot 4.1.3·Jackson 3로 올려 Trivy 예외 2건을 지웠다. 로컬 테스트·Trivy·V-FUNC·V-LOC-02/03 통과, AWS 배포는 다음 실습에서 확인한다.
 - 2026-11-23: PR #7 머지. 정기 drift 검사가 실습 계층과 공유하는 SG·route table 때문에 매일 오탐을 내서 `-refresh-only` 대신 일반 plan으로 바꿨다.

@@ -60,20 +60,22 @@ terraform/
 ├── environments/
 │   ├── dev-data/          # 유지 계층: VPC·S3·Aurora
 │   │   ├── .terraform.lock.hcl
+│   │   ├── backup.tf      # 개인 계정 복제 role·규칙 (BACKUP-01)
 │   │   ├── backend.tf.example
 │   │   ├── main.tf
 │   │   ├── outputs.tf
 │   │   ├── providers.tf
 │   │   ├── terraform.tfvars.example
 │   │   └── variables.tf
-│   └── dev/               # 실습 계층: NAT·ECS·Redis 등
-│       ├── backend.tf.example
-│       ├── data.tf
-│       ├── main.tf
-│       ├── outputs.tf
-│       ├── providers.tf
-│       ├── terraform.tfvars.example
-│       └── variables.tf
+│   ├── dev/               # 실습 계층: NAT·ECS·Redis 등
+│   │   ├── backup.tf      # DB dump 일회성 task (BACKUP-01)
+│   │   ├── data.tf
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   ├── providers.tf
+│   │   ├── terraform.tfvars.example
+│   │   └── variables.tf
+│   └── backup/            # 개인 AWS 계정: 백업 bucket·policy (로컬 state, BACKUP-01)
 └── modules/
     ├── aurora/
     ├── ecr/
@@ -88,7 +90,7 @@ terraform/
     └── vpc/
 ```
 
-루트 모듈은 두 개이고 state도 따로 둔다([DEC-008](../DECISIONS.md#결정-목록)). `terraform plan`과 `terraform apply`는 각 디렉터리에서 실행한다.
+부트캠프 계정 루트 모듈은 두 개이고 state도 따로 둔다. 개인 계정 루트 `backup`은 로컬 state로 따로 적용한다([DEC-008](../DECISIONS.md#결정-목록)). `terraform plan`과 `terraform apply`는 각 디렉터리에서 실행한다.
 
 `terraform/modules/*`는 재사용 가능한 하위 모듈이다. 하위 모듈은 단독으로 실행하는 영역이 아니라, 루트 모듈의 `main.tf`에서 호출될 때 실제 인프라 구성에 포함된다.
 
@@ -98,12 +100,12 @@ terraform/
 
 | 계층 | 디렉터리 | 리소스 | 수명 | 쉬는 동안 비용 |
 | --- | --- | --- | --- | --- |
-| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role, CloudTrail trail·로그 bucket·변경 알림 EventBridge 규칙(SEC-03) | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
-| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, SSM JWT secret | 실습마다 apply → destroy | 없음 |
+| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role, CloudTrail trail·로그 bucket·변경 알림 EventBridge 규칙(SEC-03), 개인 계정 백업 복제 role·규칙(BACKUP-01) | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
+| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application·dump task 허용 규칙, SSM JWT secret, DB dump task definition·SG·role(BACKUP-01) | 실습마다 apply → destroy | 없음 |
 
 - Aurora는 `min_capacity = 0`이라 연결이 없으면 `seconds_until_auto_pause`(기본 300초) 뒤 컴퓨트를 멈춘다. 멈춘 동안은 스토리지만 과금되고, 첫 연결에서 다시 깨어나는 데 약 15초가 걸린다(AWS 설명 기준, 실측 전). ECS가 떠 있는 동안은 연결 풀이 연결을 유지하므로 멈추지 않는다.
 - 실습 계층은 유지 계층 리소스를 state가 아니라 이름·태그로 조회한다(`dev/data.tf`). 그래서 IAC-01에서 backend를 S3로 바꿨어도 계층 간 연결은 그대로다. state는 `terraform/bootstrap`이 만든 bucket에 계층별 key로 있고 S3 자체 잠금을 쓴다([DEC-011](../DECISIONS.md#결정-목록)).
-- 승인된 미구현: 공유 계정 정리 정책에 대비해 유지 계층의 S3 객체와 DB dump를 개인 AWS 계정으로 교차 계정 복제한다. 실행 중 교차 계정 접근은 없다([DEC-012](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), BACKUP-01). 대신 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
+- 개인 계정 백업(BACKUP-01, 2026-11-23 구현): 유지 계층이 file bucket 전체를 개인 AWS 계정 bucket으로 교차 계정 복제하고(삭제 미복제), 실습 계층의 일회성 task가 DB dump를 `backups/db/`에 올려 같은 복제로 보낸다. 개인 계정 bucket은 별도 루트 `environments/backup`(로컬 state)이 만든다. 실행 중 교차 계정 접근은 없다([DEC-012](../DECISIONS.md#결정-목록), [DEC-022](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), [런북](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)). 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
 - 계층에 걸친 연결은 실습 계층이 만들고 지운다: NAT 경로(`aws_route`)는 유지 계층의 private route table에, `5432 from Application SG` 규칙은 유지 계층의 Aurora SG에 붙는다. 실습 계층을 지우면 Aurora로 들어오는 규칙이 없어진다.
 - Aurora 비밀번호는 유지 계층이 만들어 SSM SecureString에 두고, 실습 계층은 parameter ARN만 task definition에 넣는다(SEC-01, [DEC-013](../DECISIONS.md#결정-목록)). JWT secret parameter는 실습 계층이 만들고 지운다.
 - 순서: 생성은 `dev-data` → `dev`, 삭제는 `dev`만. 유지 계층을 지우려면 `aurora_deletion_protection = false`를 먼저 apply하고, 기본값으로 최종 스냅샷(`<prefix>-aurora-final`)을 남긴다.

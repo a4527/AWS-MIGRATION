@@ -7,6 +7,7 @@ terraform/
 ├── bootstrap/      # 원격 state용 S3 bucket (로컬 state, 처음 한 번)
 ├── environments/
 │   ├── dev-data/   # 유지 계층: VPC, S3, Aurora (계속 유지)
+│   ├── backup/     # 개인 AWS 계정 백업 bucket (로컬 state, MFA role 프로필)
 │   └── dev/        # 실습 계층: NAT, ALB/ECS, Lambda, Redis (실습마다 apply/destroy)
 │       ├── backend.tf            # S3 backend (bucket은 backend.hcl)
 │       ├── backend.hcl.example

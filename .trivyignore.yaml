@@ -28,10 +28,11 @@ misconfigurations:
       A customer managed key adds cost and key-policy work without a lab need.
     expired_at: 2027-05-31
   - id: AVD-AWS-0132
-    paths: ["modules/s3/main.tf", "bootstrap/main.tf", "modules/change-alerts/main.tf"]
+    paths: ["modules/s3/main.tf", "bootstrap/main.tf", "modules/change-alerts/main.tf", "environments/backup/main.tf"]
     statement: >-
       SSE-S3 (AES256) encrypts the file and state buckets. A customer managed
-      key would also need GuardDuty and replication key permissions.
+      key would also need GuardDuty and replication key permissions, and a
+      cross-account key policy for the personal backup bucket (BACKUP-01).
     expired_at: 2027-05-31
   - id: AVD-AWS-0015
     paths: ["modules/change-alerts/main.tf"]
@@ -47,7 +48,7 @@ misconfigurations:
       it with KMS would require a key policy for CloudWatch.
     expired_at: 2027-05-31
   - id: AVD-AWS-0104
-    paths: ["modules/security-groups/main.tf"]
+    paths: ["modules/security-groups/main.tf", "environments/dev/backup.tf"]
     statement: >-
       Tasks and Lambda reach AWS APIs (ECR, S3, SQS, SSM, Logs) through NAT
       without VPC endpoints, so egress cannot be narrowed to fixed CIDRs yet.

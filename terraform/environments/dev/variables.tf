@@ -180,3 +180,26 @@ variable "ecs_staging_enabled" {
   type        = bool
   default     = true
 }
+
+variable "db_backup_object_prefix" {
+  description = "File bucket prefix for pg_dump files (BACKUP-01). Must stay outside files/ so the app, Lambda and GuardDuty ignore it."
+  type        = string
+  default     = "backups/db/"
+
+  validation {
+    condition     = endswith(var.db_backup_object_prefix, "/") && !startswith(var.db_backup_object_prefix, "files/")
+    error_message = "db_backup_object_prefix must end with / and must not be under files/."
+  }
+}
+
+variable "db_backup_postgres_image" {
+  description = "pg_dump image. Its major version must be at least the Aurora major (16)."
+  type        = string
+  default     = "public.ecr.aws/docker/library/postgres:16.16-alpine"
+}
+
+variable "db_backup_aws_cli_image" {
+  description = "AWS CLI image that uploads the dump."
+  type        = string
+  default     = "public.ecr.aws/aws-cli/aws-cli:2.42.0"
+}
