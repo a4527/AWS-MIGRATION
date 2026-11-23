@@ -37,6 +37,7 @@
 
 ## 최근 변경
 
+- 2026-11-23: PR #7 머지. 정기 drift 검사가 실습 계층과 공유하는 SG·route table 때문에 매일 오탐을 내서 `-refresh-only` 대신 일반 plan으로 바꿨다.
 - 2026-11-20: 3단계 실행. OPS-01·OPS-02·FILE-03·CICD-02 완료, CICD-03·IAC-03 일부, PERF-01 중단. 장애 훈련과 첫 승격 배포에서 결함 6개를 찾아 고쳤다(저장소 장애 404, 알람 누락 2건, grace period, ALB 조회 권한, 배포 실패 알림 부재). DEC-017~020.
 - 2026-11-20: 1·2회차 실행. 실습 계층 배포(MIG-02), 기능·계약 비교(VERIFY-01), 장애 주입·성능 smoke(VERIFY-02), 요청 ID·구조화 로그·대시보드·SLI(OBS-01), 알람 SNS 알림(OBS-02).
 - 2026-11-20: CD를 main push 자동 배포로 바꾸고 배포 role·ECR을 유지 계층으로 옮겼다(DEC-015). Trivy 실패 원인이던 의존성을 Spring Boot 3.5.16 등으로 올렸고, 남은 spring-webmvc 2건은 만료일 있는 예외로 두었다(SEC-02).

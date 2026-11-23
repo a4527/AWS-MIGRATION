@@ -253,7 +253,7 @@ rm restore.tfstate
 | --- | --- | --- |
 | PR (`terraform/**`) | `fmt -check`, 세 루트 모듈 `validate`, Trivy IaC 검사(HIGH/CRITICAL), 두 계층 `plan -lock=false` 요약 | `terraform-plan`(읽기 전용) |
 | main push | 두 계층 plan → 실습 계층 plan 파일 저장 → **`terraform-dev` 승인 후 그 plan 파일을 apply**. 실습 계층이 없거나 plan에 변경이 없으면(`-detailed-exitcode` 0) apply job 자체를 건너뛰어 승인을 요청하지 않는다 | plan: `terraform-plan`, apply: `terraform-apply` |
-| 매일 00:00 UTC(09:00 KST)·수동 | `plan -refresh-only -detailed-exitcode`. 변경이 있으면 job 실패(drift 알림). 실습 계층이 없으면 건너뜀 | `terraform-plan` |
+| 매일 00:00 UTC(09:00 KST)·수동 | 일반 `plan -detailed-exitcode`(코드와 실제 비교). 적용할 변경이 있으면 job 실패(drift 알림), 바뀐 리소스는 요약과 로그에 남긴다. 실습 계층이 없으면 건너뜀. `-refresh-only`를 쓰지 않는 이유는 [TROUBLESHOOTING](../TROUBLESHOOTING.md) 참고 | `terraform-plan` |
 
 - 권한 경계:
   - plan role: `ReadOnlyAccess`에 state 읽기를 더하고, 업로드 파일(`s3:GetObject`)과 Secrets Manager 값 읽기는 거부한다. state lock을 쓰지 않는다.
