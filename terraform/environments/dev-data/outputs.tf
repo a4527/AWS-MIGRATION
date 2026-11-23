@@ -82,3 +82,8 @@ output "change_alerts_trail_bucket_name" {
   description = "S3 bucket for the SEC-03 CloudTrail trail log files."
   value       = module.change_alerts.trail_bucket_name
 }
+
+output "backup_replication_role_arn" {
+  description = "Role S3 uses to replicate the file bucket to the personal backup bucket (BACKUP-01). Null while disabled."
+  value       = one(aws_iam_role.backup_replication[*].arn)
+}

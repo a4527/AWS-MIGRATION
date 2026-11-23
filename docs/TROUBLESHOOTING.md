@@ -225,3 +225,10 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
   - 보안 그룹에 inline `ingress`를 적어 유지 계층이 소유하게 하면, 별도 리소스 규칙과 충돌해 두 계층이 서로 규칙을 지우게 된다.
 - 해결 방법: Terraform drift 검사로는 메우지 않는다. 대신 API 호출 자체를 감시한다. CloudTrail 관리 이벤트(`AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`, `CreateRoute`, `ReplaceRoute` 등)를 EventBridge 규칙으로 받아, Terraform CI·배포 role이 아닌 주체의 호출이면 SNS로 알린다. [SEC-03](TASKS.md)으로 구현했다([DEC-021](DECISIONS.md#결정-목록), [변경 알림](design/DEPLOYMENT.md#41-3-terraform-밖-네트워크-변경-알림-sec-03)).
 - 재검증 방법·결과: 2026-11-23 Aurora SG에 임시 규칙(192.0.2.10/32)을 넣고 30초 뒤 지웠다. 두 번째 시험에서 EventBridge 매칭 2건, SNS 전달 2건(실패 0). 첫 시험(trail 생성 후 1분 이내)의 추가 이벤트는 매칭되지 않았다.
+
+## pg_dump task가 timeout expired로 실패함
+
+- 증상: `scripts/db-backup.sh`나 일회성 `psql` task에서 `connection to server at "fileshare-dev-aurora.cluster-..." port 5432 failed: timeout expired`, pg-dump 컨테이너 exit 2. 보안 그룹 규칙(dump SG → Aurora 5432)은 있다.
+- 원인: Aurora 클러스터가 일시정지(0 ACU)가 아니라 **정지**(`stopped`) 상태였다. 일시정지는 첫 연결에서 약 15초 만에 깨어나지만, 정지된 클러스터는 연결로 깨어나지 않는다. 2026-11-23 확인한 이벤트: 11-20 08:57Z 실습 종료 후 일시정지 → 17:18Z 백그라운드 작업으로 재개 → 17:29Z `DB cluster stopped`. 우리 작업일지에 정지 기록이 없어 공유 계정 정리 정책으로 추정한다(미확인). backend service도 같은 이유로 task가 뜨지 못한다.
+- 해결 방법: `aws rds describe-db-instances`로 상태가 `stopped`인지 보고 `aws rds start-db-cluster --db-cluster-identifier fileshare-dev-aurora`로 시작한다. `available`까지 약 5분 걸렸다. 정지된 클러스터는 7일 뒤 AWS가 자동으로 다시 시작한다.
+- 재검증 방법·결과: 2026-11-23 05:42:50Z 시작 → 05:48:13Z `available`, 이후 `psql` task와 `pg_dump` task 성공.

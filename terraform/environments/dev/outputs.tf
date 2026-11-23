@@ -102,3 +102,18 @@ output "ecs_staging_service_name" {
   description = "Staging ECS service name used by CD."
   value       = module.ecs.staging_service_name
 }
+
+output "db_backup_task_definition_family" {
+  description = "One-off pg_dump task (BACKUP-01); run with scripts/db-backup.sh."
+  value       = aws_ecs_task_definition.db_backup.family
+}
+
+output "db_backup_security_group_id" {
+  description = "Security group for the pg_dump task."
+  value       = aws_security_group.db_backup.id
+}
+
+output "db_backup_object_prefix" {
+  description = "File bucket prefix that holds pg_dump files."
+  value       = var.db_backup_object_prefix
+}

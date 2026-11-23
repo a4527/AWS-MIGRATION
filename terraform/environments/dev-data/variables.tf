@@ -182,3 +182,31 @@ variable "terraform_state_bucket_name" {
   description = "Terraform state bucket created by terraform/bootstrap (IAC-01), used by the CI roles (IAC-03)."
   type        = string
 }
+
+variable "backup_account_id" {
+  description = "Personal AWS account that holds the backup bucket (BACKUP-01, ADR-002). Keep it only in terraform.tfvars."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.backup_account_id == "" || can(regex("^[0-9]{12}$", var.backup_account_id))
+    error_message = "backup_account_id must be a 12-digit account ID or empty."
+  }
+}
+
+variable "backup_bucket_name" {
+  description = "Backup bucket in the personal account (created by ../backup). Empty disables replication."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.backup_bucket_name == "" || startswith(var.backup_bucket_name, "fileshare-backup-")
+    error_message = "The personal account role manages only fileshare-backup-* buckets."
+  }
+}
+
+variable "backup_replication_paused" {
+  description = "Pause replication to the backup bucket, e.g. during PERF-01 load tests whose data is cleaned up afterwards."
+  type        = bool
+  default     = false
+}
