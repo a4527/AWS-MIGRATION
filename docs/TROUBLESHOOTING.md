@@ -209,3 +209,10 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 - 원인: WSL에 Linux 브라우저가 없다.
 - 해결 방법: 출력된 `https://us-east-1.signin.aws.amazon.com/v1/authorize?...` 주소를 Windows 브라우저에서 연다. 로그인 뒤 `127.0.0.1:<port>`로 돌아오는 요청은 WSL2 localhost 전달로 대기 중인 명령이 받는다. 안 되면 `aws login --remote`를 쓴다.
 - 재검증 방법·결과: 2026-11-19 두 번 모두 Windows 브라우저로 로그인 완료, `get-caller-identity --profile personal` 성공.
+
+## 정기 drift 검사가 유지 계층에서 매일 실패함
+
+- 증상: Terraform workflow의 `drift (dev-data)`가 2026-11-21, 11-22에 `Drift detected in dev-data`로 실패했다. 유지 계층 코드와 리소스는 바뀌지 않았다.
+- 원인: 검사가 `plan -refresh-only`(state와 실제 비교)였다. 실습 계층은 유지 계층의 Aurora 보안 그룹에 ingress 규칙(`aws_security_group_rule`)을, private route table에 NAT 경로(`aws_route`)를 별도 리소스로 더한다. 유지 계층 state는 마지막 refresh 때 본 inline `ingress`·`route` 값을 기억하므로, 실습 계층을 올리거나 내릴 때마다 이 값이 "밖에서 바뀜"으로 나온다. 유지 계층 코드는 이 속성을 선언하지 않아 일반 plan은 변경이 없다.
+- 해결 방법: drift 검사를 일반 `plan -detailed-exitcode`(코드와 실제 비교)로 바꿨다. 코드가 관리하는 속성이 바뀌면 여전히 적용할 변경으로 잡히고, 다른 계층이 관리하는 규칙은 무시된다. 바뀐 리소스 목록은 실행 요약과 job 로그에 함께 남긴다.
+- 재검증 방법·결과: 2026-11-23 로컬에서 `-refresh-only`는 exit 2(보안 그룹 ingress 1개, route 1개 제거로 표시), 일반 plan은 exit 0. 수정 머지 후 workflow를 수동 실행해 drift job이 통과하는지 확인한다.

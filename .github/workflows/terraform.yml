@@ -241,23 +241,27 @@ jobs:
       - run: terraform init -backend-config=backend.hcl -input=false
 
       # The lab layer is usually destroyed; a full create plan is not drift.
+      # A normal plan (code vs real), not -refresh-only (state vs real): the lab
+      # layer adds rules/routes to data-layer SG and route table, so a refresh
+      # reports them as changed every time the lab layer goes up or down.
       - name: Detect drift
         run: |
           if [ "${{ matrix.layer }}" = "dev" ] && ! terraform state list 2>/dev/null | grep -q '^module.ecs.aws_ecs_service.application$'; then
             echo "Lab layer is down; skipping drift check." >> "$GITHUB_STEP_SUMMARY"; exit 0
           fi
           set +e
-          terraform plan -lock=false -refresh-only -input=false -no-color -detailed-exitcode > drift.txt 2>&1
+          terraform plan -lock=false -input=false -no-color -detailed-exitcode > drift.txt 2>&1
           code=$?
           set -e
           if [ "$code" = "2" ]; then
             {
               echo "### Drift detected in ${{ matrix.layer }}"
               echo '```'
-              grep -E '^  # |^  [~+-] ' drift.txt | head -60
+              grep -E '^  # |^Plan:' drift.txt | head -60
               echo '```'
               echo "Review and either apply the code (restores it) or update the code to accept the change. Runbook: docs/design/DEPLOYMENT.md 4.1-2."
             } >> "$GITHUB_STEP_SUMMARY"
+            grep -E '^  # |^Plan:' drift.txt | head -60
             echo "::error::Drift detected in ${{ matrix.layer }}"
             exit 1
           fi
