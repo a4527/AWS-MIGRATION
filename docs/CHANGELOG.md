@@ -1,5 +1,10 @@
 사용자 기능·동작 변경을 기록한다. 확인 가능한 릴리스별 변경 근거가 없어 과거 이력을 소급 작성하지 않았다. 문서 정리와 작업 등록의 수행 근거는 [작업일지](worklogs/2026-11-16.md), 현재 범위는 [PROGRESS](PROGRESS.md)를 따른다.
 
+## 2026-11-23 (미배포)
+
+- 백엔드를 Spring Boot 4.1.3(Spring Framework 7.0.11, Spring Security 7.1.3, Hibernate 7.4, Jackson 3, Tomcat 11)으로 올렸다. spring-webmvc 취약점 2건(CVE-2026-47884·47890)의 예외가 필요 없어졌다. API 요청·응답 형식과 오류 코드는 바뀌지 않았다.
+- 근거: [작업일지](worklogs/2026-11-23.md#sec-02-spring-boot-4-전환)
+
 ## 2026-11-20 (미배포)
 
 - 백엔드 의존성을 보안 패치 버전으로 올렸다(Spring Boot 3.3.7 → 3.5.16, Tomcat 10.1.62, Netty 4.1.141, Jackson 2.21.8, PostgreSQL JDBC 42.7.14, MinIO 8.6.0, AWS SDK 2.59.5 등). API 동작은 바뀌지 않았다.

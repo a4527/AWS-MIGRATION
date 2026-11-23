@@ -454,7 +454,7 @@ $DC up -d backend      # 종료됐으면 다시 띄운다
 판정:
 
 - 4-1: 로그인이 실패하지 않고 토큰을 받는다. 걸린 시간이 약 20초이고 30초(Hikari 기본 `connectionTimeout`) 안이다.
-- 4-2: 먼저 `HikariPool-1 - Starting` 시각이 unpause보다 앞인지 본다. 뒤라면 재현되지 않은 것이므로 pause를 늘려 다시 한다. 현재 코드에서는 연결 시도가 약 6초씩 두 번 실패한 뒤 `Application run failed`로 종료(exit 1)되는 것이 기대 결과다(2026-11-19 확인). 기동 시 DB 재시도는 넣지 않았고, AWS에서는 배포 전에 DB를 깨워 이 상황을 피한다([DEC-010](../DECISIONS.md#결정-목록), [배포 전 DB 깨우기](DEPLOYMENT.md#46-github-actions-배포-실행)). 결과가 바뀌면(예: running으로 `UP`) 그 결과와 원인을 기록한다.
+- 4-2: 먼저 `HikariPool-1 - Starting` 시각이 unpause보다 앞인지 본다. 뒤라면 재현되지 않은 것이므로 pause를 늘려 다시 한다. Spring Boot 3.5(HikariCP 6.3)에서는 연결 시도가 약 6초씩 두 번 실패한 뒤 `Application run failed`로 종료(exit 1)됐다(2026-11-19). Spring Boot 4.1(HikariCP 7.0, Hibernate 7.4)에서는 실패 없이 DB가 풀릴 때까지 기다린 뒤 기동해 `UP`이 됐다(pause 40초·70초, 2026-11-23). 어느 라이브러리 변경 때문인지는 확인하지 않았다. 기동 시 DB 재시도는 넣지 않았고, AWS에서는 배포 전에 DB를 깨워 이 상황을 피한다([DEC-010](../DECISIONS.md#결정-목록), [배포 전 DB 깨우기](DEPLOYMENT.md#46-github-actions-배포-실행)). 결과가 바뀌면(예: running으로 `UP`) 그 결과와 원인을 기록한다.
 
 ### V-LOC-05 Lambda 후처리
 

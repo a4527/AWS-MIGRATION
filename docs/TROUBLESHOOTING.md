@@ -74,7 +74,7 @@ curl -i http://localhost:8080/actuator/health
 ## ECS task가 기동 중 DB 연결 실패로 종료됨
 
 - 증상: 새 task가 health check 전에 STOPPED가 되고, 로그에 `The connection attempt failed`(SQLState 08001)와 `Application run failed`가 있다.
-- 원인: backend는 기동할 때 DB에 연결하지 못하면 재시도 없이 종료된다. Aurora가 0 ACU로 일시정지돼 있으면 재개가 끝나기 전에 연결이 실패할 수 있다(로컬 재현: [V-LOC-04](design/VALIDATION.md#v-loc-04-db-재개-지연) 4-2).
+- 원인: backend는 기동할 때 DB에 연결하지 못하면 재시도 없이 종료된다. Aurora가 0 ACU로 일시정지돼 있으면 재개가 끝나기 전에 연결이 실패할 수 있다(로컬 재현: [V-LOC-04](design/VALIDATION.md#v-loc-04-db-재개-지연) 4-2). Spring Boot 4 전환 후(2026-11-23) 로컬 재현에서는 종료하지 않고 DB를 기다렸다. Aurora 재개에서도 같은지는 확인하지 않았으므로 아래 대응을 유지한다.
 - 해결 방법:
   - [배포 전 DB 깨우기](design/DEPLOYMENT.md#46-github-actions-배포-실행)를 실행하고 재개 이벤트를 확인한다.
   - 실패한 연결 시도도 재개를 일으키므로 ECS가 띄우는 다음 task는 성공할 것으로 예상한다(MIG-02 전까지 미확인). 계속 실패하면 DB 엔드포인트·SG 5432 규칙·비밀번호를 확인한다.

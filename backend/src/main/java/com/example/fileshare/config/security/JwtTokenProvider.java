@@ -1,8 +1,8 @@
 package com.example.fileshare.config.security;
 
 import com.example.fileshare.user.domain.User;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
@@ -84,7 +84,7 @@ public class JwtTokenProvider {
             String email = (String) claims.get("email");
             String role = (String) claims.get("role");
             return Optional.of(new AuthUserPrincipal(userId, email, role));
-        } catch (RuntimeException | java.io.IOException exception) {
+        } catch (RuntimeException exception) {
             return Optional.empty();
         }
     }
@@ -96,7 +96,7 @@ public class JwtTokenProvider {
     private String base64UrlJson(Map<String, Object> value) {
         try {
             return Base64.getUrlEncoder().withoutPadding().encodeToString(objectMapper.writeValueAsBytes(value));
-        } catch (java.io.IOException exception) {
+        } catch (tools.jackson.core.JacksonException exception) {
             throw new IllegalStateException("Failed to serialize JWT", exception);
         }
     }

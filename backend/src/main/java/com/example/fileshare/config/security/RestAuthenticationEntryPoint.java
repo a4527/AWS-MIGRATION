@@ -2,7 +2,7 @@ package com.example.fileshare.config.security;
 
 import com.example.fileshare.common.api.ApiResponse;
 import com.example.fileshare.common.error.ErrorCode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;

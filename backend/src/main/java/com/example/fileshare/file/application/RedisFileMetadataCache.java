@@ -3,7 +3,7 @@ package com.example.fileshare.file.application;
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.FileStatus;
 import com.example.fileshare.file.domain.ScanStatus;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;

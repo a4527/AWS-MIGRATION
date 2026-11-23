@@ -6,7 +6,7 @@ import static org.mockito.Mockito.mock;
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.ScanStatus;
 import com.example.fileshare.file.repository.InMemoryFileMetadataRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;

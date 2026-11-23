@@ -1116,7 +1116,7 @@ AWS 실행 확인은 PORT-01 이후 다음 순서로 수행하고 실제 revisio
 
 - `test` → `image` → `deploy` 순서다. 테스트·이미지 빌드·검사 실패 시 뒤 job을 실행하지 않는다. 검사 도구나 DB 다운로드 실패도 통과로 처리하지 않는다.
 - Trivy는 OS와 애플리케이션 패키지의 HIGH/CRITICAL 취약점을 수정 버전 유무와 관계없이 차단한다. `exit-code: 1`, `ignore-unfixed: false`를 사용하며 자동 예외·실패 무시는 두지 않는다. LOW/MEDIUM은 이 차단 범위 밖이다. 도구 설정은 [Trivy 공식 안내](https://github.com/aquasecurity/trivy-action#usage)를 따른다.
-- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 허용한 예외는 저장소 루트 `.trivyignore.yaml`에 CVE별 사유·만료일(`expired_at`)과 함께 둔다. 만료일이 지나면 Trivy가 다시 차단한다. 현재 예외: CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19, 수정은 Spring Framework 7/Spring Boot 4에만 있음, 앱이 XsltView·SSE·view fragment를 쓰지 않음, 2026-11-20 승인, 만료 2026-12-31, 해제 작업 SEC-02). 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
+- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 허용한 예외는 저장소 루트 `.trivyignore.yaml`에 CVE별 사유·만료일(`expired_at`)과 함께 둔다. 만료일이 지나면 Trivy가 다시 차단한다. 현재 이미지 취약점 예외는 없다. 2026-11-20에 승인한 CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19) 예외는 2026-11-23 Spring Boot 4 전환(SEC-02)으로 지웠다. 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
 - PR은 `pull_request`로 실행한다. 기본 권한은 `contents: read`이며 AWS secret을 참조하지 않는다. `id-token: write`와 AWS role 참조는 배포 job에만 둔다. [GitHub job 권한 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idpermissions)을 따른다.
 - `main` push·수동 실행은 검사한 Docker 이미지를 1일 보존 artifact로 넘겨 배포 job에서 다시 빌드하지 않는다. 환경 간 digest 승격·승인은 CICD-02에서 검증한다.
 - 병합 차단을 보장하려면 저장소 ruleset/branch protection에서 `Test backend`, `Build and scan backend image`를 필수 검사로 등록해야 한다. 경로 필터로 workflow가 생략되는 문서 전용 PR의 처리도 함께 검토한다. 이번 로컬 수정으로 원격 저장소 설정을 바꾸지는 않았다.
