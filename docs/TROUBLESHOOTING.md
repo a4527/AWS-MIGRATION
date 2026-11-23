@@ -215,7 +215,7 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 - 증상: Terraform workflow의 `drift (dev-data)`가 2026-11-21, 11-22에 `Drift detected in dev-data`로 실패했다. 유지 계층 코드와 리소스는 바뀌지 않았다.
 - 원인: 검사가 `plan -refresh-only`(state와 실제 비교)였다. 실습 계층은 유지 계층의 Aurora 보안 그룹에 ingress 규칙(`aws_security_group_rule`)을, private route table에 NAT 경로(`aws_route`)를 별도 리소스로 더한다. 유지 계층 state는 마지막 refresh 때 본 inline `ingress`·`route` 값을 기억하므로, 실습 계층을 올리거나 내릴 때마다 이 값이 "밖에서 바뀜"으로 나온다. 유지 계층 코드는 이 속성을 선언하지 않아 일반 plan은 변경이 없다.
 - 해결 방법: drift 검사를 일반 `plan -detailed-exitcode`(코드와 실제 비교)로 바꿨다. 코드가 관리하는 속성이 바뀌면 여전히 적용할 변경으로 잡히고, 다른 계층이 관리하는 규칙은 무시된다. 바뀐 리소스 목록은 실행 요약과 job 로그에 함께 남긴다.
-- 재검증 방법·결과: 2026-11-23 로컬에서 `-refresh-only`는 exit 2(보안 그룹 ingress 1개, route 1개 제거로 표시), 일반 plan은 exit 0. 수정 머지 후 workflow를 수동 실행해 drift job이 통과하는지 확인한다.
+- 재검증 방법·결과: 2026-11-23 로컬에서 `-refresh-only`는 exit 2(보안 그룹 ingress 1개, route 1개 제거로 표시), 일반 plan은 exit 0. PR #8 머지 후 workflow 수동 실행에서 `drift (dev-data)`·`drift (dev)` 모두 통과(실습 계층 없음 상태).
 
 ## drift 검사가 별도 리소스로 붙인 보안 그룹 규칙을 잡지 못함
 
