@@ -18,6 +18,11 @@ output "database_subnet_ids" {
   value       = aws_subnet.database[*].id
 }
 
+output "public_route_table_id" {
+  description = "Route table ID for public subnets."
+  value       = aws_route_table.public.id
+}
+
 output "database_route_table_id" {
   description = "Route table ID for database subnets."
   value       = aws_route_table.database.id

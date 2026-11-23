@@ -29,13 +29,13 @@
 
 1. 다음 실습: 실습 계층 apply → Spring Boot 4 이미지 배포 확인(SEC-02) → CICD-03 drill B(production 런타임 실패 → 자동 롤백)·배포 실패 이메일 → IAC-03 drift 주입 시험 → PERF-01 기준선·확장 비교 → 화면 캡처([목록](PORTFOLIO.md#화면-캡처-목록)).
 2. BACKUP-01: 개인 계정 백업.
-3. SEC-03: Terraform 밖 보안 그룹 변경 알림.
-4. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
+3. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-23: SEC-03. Aurora SG·route table을 Terraform CI 밖에서 바꾸면 CloudTrail → EventBridge → SNS로 1분 안에 알린다(DEC-021). 유지 계층에 trail을 추가했다.
 - 2026-11-23: SEC-02. Spring Boot 4.1.3·Jackson 3로 올려 Trivy 예외 2건을 지웠다. 로컬 테스트·Trivy·V-FUNC·V-LOC-02/03 통과, AWS 배포는 다음 실습에서 확인한다.
 - 2026-11-23: PR #7 머지. 정기 drift 검사가 실습 계층과 공유하는 SG·route table 때문에 매일 오탐을 내서 `-refresh-only` 대신 일반 plan으로 바꿨다.
 - 2026-11-20: 3단계 실행. OPS-01·OPS-02·FILE-03·CICD-02 완료, CICD-03·IAC-03 일부, PERF-01 중단. 장애 훈련과 첫 승격 배포에서 결함 6개를 찾아 고쳤다(저장소 장애 404, 알람 누락 2건, grace period, ALB 조회 권한, 배포 실패 알림 부재). DEC-017~020.

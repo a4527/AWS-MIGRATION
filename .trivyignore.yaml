@@ -28,10 +28,17 @@ misconfigurations:
       A customer managed key adds cost and key-policy work without a lab need.
     expired_at: 2027-05-31
   - id: AVD-AWS-0132
-    paths: ["modules/s3/main.tf", "bootstrap/main.tf"]
+    paths: ["modules/s3/main.tf", "bootstrap/main.tf", "modules/change-alerts/main.tf"]
     statement: >-
       SSE-S3 (AES256) encrypts the file and state buckets. A customer managed
       key would also need GuardDuty and replication key permissions.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0015
+    paths: ["modules/change-alerts/main.tf"]
+    statement: >-
+      SEC-03 (DEC-021): the trail exists to feed EventBridge; its S3 copy is kept
+      7 days with SSE-S3. A customer managed key adds a monthly key cost and a
+      key policy for CloudTrail without a lab need.
     expired_at: 2027-05-31
   - id: AVD-AWS-0095
     paths: ["environments/dev-data/main.tf"]
