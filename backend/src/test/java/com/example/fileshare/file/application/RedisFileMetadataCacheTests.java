@@ -15,8 +15,7 @@ import static org.mockito.Mockito.when;
 import com.example.fileshare.file.domain.FileMetadata;
 import com.example.fileshare.file.domain.FileStatus;
 import com.example.fileshare.file.domain.ScanStatus;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import tools.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.time.Instant;
@@ -48,7 +47,7 @@ class RedisFileMetadataCacheTests {
         when(redis.opsForValue()).thenReturn(values);
         scheduler = mock(ScheduledExecutorService.class);
         meters = new SimpleMeterRegistry();
-        cache = new RedisFileMetadataCache(redis, new ObjectMapper().registerModule(new JavaTimeModule()), meters,
+        cache = new RedisFileMetadataCache(redis, new ObjectMapper(), meters,
                 scheduler, List.of(Duration.ZERO, Duration.ZERO), List.of(Duration.ofSeconds(1), Duration.ofSeconds(2)));
     }
 

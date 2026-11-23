@@ -98,7 +98,7 @@ terraform/
 
 | 계층 | 디렉터리 | 리소스 | 수명 | 쉬는 동안 비용 |
 | --- | --- | --- | --- | --- |
-| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
+| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role, CloudTrail trail·로그 bucket·변경 알림 EventBridge 규칙(SEC-03) | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
 | 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, SSM JWT secret | 실습마다 apply → destroy | 없음 |
 
 - Aurora는 `min_capacity = 0`이라 연결이 없으면 `seconds_until_auto_pause`(기본 300초) 뒤 컴퓨트를 멈춘다. 멈춘 동안은 스토리지만 과금되고, 첫 연결에서 다시 깨어나는 데 약 15초가 걸린다(AWS 설명 기준, 실측 전). ECS가 떠 있는 동안은 연결 풀이 연결을 유지하므로 멈추지 않는다.

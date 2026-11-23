@@ -23,20 +23,20 @@
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
 | AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
-| GitHub Actions | actionlint, 로컬 Trivy(예외 2건 적용 후 0건), 테스트 48개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
+| GitHub Actions | actionlint, 로컬 Trivy(2026-11-23 Spring Boot 4 전환 후 예외 없이 0건), 테스트 67개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
 
-1. PR #7 머지(배포 role ALB 조회 권한·SNS topic 정책·배포 실패 알림 규칙 코드). 머지 전에는 유지 계층 drift(로컬 apply만 된 상태)가 매일 drift 탐지에 잡힌다.
-2. 다음 실습: 실습 계층 apply → CICD-03 drill B(production 런타임 실패 → 자동 롤백)·배포 실패 이메일 → IAC-03 drift 주입 시험 → PERF-01 기준선·확장 비교 → 화면 캡처([목록](PORTFOLIO.md#화면-캡처-목록)).
-3. SEC-02: Spring Boot 4 전환(Trivy 예외 만료 2026-12-31).
-4. BACKUP-01: 개인 계정 백업.
-5. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
+1. 다음 실습: 실습 계층 apply → Spring Boot 4 이미지 배포 확인(SEC-02) → CICD-03 drill B(production 런타임 실패 → 자동 롤백)·배포 실패 이메일 → IAC-03 drift 주입 시험 → PERF-01 기준선·확장 비교 → 화면 캡처([목록](PORTFOLIO.md#화면-캡처-목록)).
+2. BACKUP-01: 개인 계정 백업.
+3. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-23: SEC-03. Aurora SG·route table을 Terraform CI 밖에서 바꾸면 CloudTrail → EventBridge → SNS로 1분 안에 알린다(DEC-021). 유지 계층에 trail을 추가했다.
+- 2026-11-23: SEC-02. Spring Boot 4.1.3·Jackson 3로 올려 Trivy 예외 2건을 지웠다. 로컬 테스트·Trivy·V-FUNC·V-LOC-02/03 통과, AWS 배포는 다음 실습에서 확인한다.
 - 2026-11-23: PR #7 머지. 정기 drift 검사가 실습 계층과 공유하는 SG·route table 때문에 매일 오탐을 내서 `-refresh-only` 대신 일반 plan으로 바꿨다.
 - 2026-11-20: 3단계 실행. OPS-01·OPS-02·FILE-03·CICD-02 완료, CICD-03·IAC-03 일부, PERF-01 중단. 장애 훈련과 첫 승격 배포에서 결함 6개를 찾아 고쳤다(저장소 장애 404, 알람 누락 2건, grace period, ALB 조회 권한, 배포 실패 알림 부재). DEC-017~020.
 - 2026-11-20: 1·2회차 실행. 실습 계층 배포(MIG-02), 기능·계약 비교(VERIFY-01), 장애 주입·성능 smoke(VERIFY-02), 요청 ID·구조화 로그·대시보드·SLI(OBS-01), 알람 SNS 알림(OBS-02).

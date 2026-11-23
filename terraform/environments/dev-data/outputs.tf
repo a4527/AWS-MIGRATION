@@ -77,3 +77,8 @@ output "terraform_apply_role_arn" {
   description = "GitHub Actions secret AWS_TF_APPLY_ROLE_ARN."
   value       = module.terraform_ci.apply_role_arn
 }
+
+output "change_alerts_trail_bucket_name" {
+  description = "S3 bucket for the SEC-03 CloudTrail trail log files."
+  value       = module.change_alerts.trail_bucket_name
+}

@@ -269,6 +269,45 @@ drift가 탐지되면:
 3. 의도한 변경이면 코드에 반영해 PR로 올린다(코드가 기준이다).
 4. drift 원인(누가·언제)은 CloudTrail에서 해당 API 이벤트로 찾는다.
 
+### 4.1-3 Terraform 밖 네트워크 변경 알림 (SEC-03)
+
+결정: [DEC-021](../DECISIONS.md#결정-목록). 코드: `terraform/modules/change-alerts`(유지 계층).
+
+drift 검사는 유지 계층 Aurora SG의 규칙과 private·database route table의 경로를 보지 못한다. 실습 계층이 별도 리소스로 붙이기 때문이다([TROUBLESHOOTING](../TROUBLESHOOTING.md#drift-검사가-별도-리소스로-붙인-보안-그룹-규칙을-잡지-못함)). 그래서 API 호출을 직접 감시한다.
+
+```text
+EC2 API 호출 → CloudTrail trail(fileshare-dev-trail, 쓰기 관리 이벤트) → EventBridge 기본 버스
+  ├─ fileshare-dev-network-change         : Aurora SG 규칙·route table 3개 변경, apply role 세션 제외
+  └─ fileshare-dev-change-watch-tampering : trail 중지·삭제·변경, 위 규칙 비활성화·삭제·target 변경
+      → SNS fileshare-dev-alarms → 이메일
+```
+
+| 항목 | 값 |
+| --- | --- |
+| 감시 API | `Authorize/RevokeSecurityGroupIngress·Egress`, `UpdateSecurityGroupRuleDescriptions*`, `ModifySecurityGroupRules`, `CreateRoute`·`ReplaceRoute`·`DeleteRoute` |
+| 대상 | Aurora SG, public·private·database route table(ID는 유지 계층 output에서 나온다). 실습 계층 SG는 규칙이 inline이라 drift 검사로 잡힌다 |
+| 제외 | `arn:aws:sts::<계정>:assumed-role/fileshare-dev-terraform-apply/` 로 시작하는 호출(CI 승인 apply) |
+| 알림 내용 | API 이름, 시각, 호출자 ARN, IP, user agent, SG·route table ID, 오류 코드, CloudTrail event ID |
+| 지연 | 호출 후 1분 안에 SNS 전달(2026-11-23 실측) |
+| 로그 | `fileshare-dev-cloudtrail-<계정>` bucket, 7일 뒤 삭제. 원인 조사는 CloudTrail 이벤트 기록(90일)으로 충분하다 |
+| 비용 | 관리 이벤트 첫 사본은 무료. S3 저장·PUT만 든다(공유 계정 전체 쓰기 이벤트 기준 월 몇 센트 예상, 미측정) |
+
+알림이 오면:
+
+1. 호출자 ARN이 본인 로컬 `terraform apply`·`destroy`인지 본다. 실습 계층을 로컬에서 만들거나 지우면 Aurora 허용 규칙과 NAT 경로 변경으로 알림이 2~4건 온다. CI 승인 apply는 알림이 없다.
+2. 아니면 CloudTrail 이벤트 기록에서 event ID로 요청 내용을 확인하고, 의도치 않은 규칙·경로를 지운다. 실습 계층이 떠 있으면 실습 계층 `terraform plan`으로 원래 규칙이 그대로인지 확인한다.
+3. tampering 알림이 오면 `aws cloudtrail get-trail-status --name fileshare-dev-trail`로 로깅 여부를 보고, 유지 계층 `terraform plan`이 변경 없음인지 확인한다. 다르면 로컬 apply로 되돌린다.
+
+알림 시험(검증한 절차): 문서용 주소(192.0.2.0/24)로 Aurora SG에 임시 규칙을 넣고 30초 뒤 지운다. `AWS/Events MatchedEvents`(규칙 `fileshare-dev-network-change`)와 `AWS/SNS NumberOfNotificationsDelivered`가 각각 2 늘고 이메일 2건이 오면 통과다. trail을 만든 직후 1분 안의 호출은 EventBridge로 전달되지 않을 수 있다(2026-11-23 관찰).
+
+```bash
+SG=$(terraform -chdir=terraform/environments/dev-data output -raw aurora_security_group_id)
+RID=$(aws ec2 authorize-security-group-ingress --group-id "$SG" \
+  --ip-permissions 'IpProtocol=tcp,FromPort=5432,ToPort=5432,IpRanges=[{CidrIp=192.0.2.10/32,Description=SEC-03 alert test}]' \
+  --query 'SecurityGroupRules[0].SecurityGroupRuleId' --output text)
+sleep 30; aws ec2 revoke-security-group-ingress --group-id "$SG" --security-group-rule-ids "$RID"
+```
+
 ### 4.2 Terraform 변수 파일 작성
 
 유지 계층을 처음 만들 때만 다음을 수행한다.
@@ -371,6 +410,7 @@ terraform plan
 VPC / IGW / subnet / route table (private route table에는 NAT 경로 없음)
 S3 bucket (versioning, 암호화, public access 차단)
 Aurora PostgreSQL cluster / instance / subnet group / security group (규칙 없음)
+CloudTrail trail / 로그 bucket / EventBridge 규칙 2개 (SEC-03 변경 알림)
 ```
 
 실습 계층(`dev`) 생성 대상:
@@ -1116,7 +1156,7 @@ AWS 실행 확인은 PORT-01 이후 다음 순서로 수행하고 실제 revisio
 
 - `test` → `image` → `deploy` 순서다. 테스트·이미지 빌드·검사 실패 시 뒤 job을 실행하지 않는다. 검사 도구나 DB 다운로드 실패도 통과로 처리하지 않는다.
 - Trivy는 OS와 애플리케이션 패키지의 HIGH/CRITICAL 취약점을 수정 버전 유무와 관계없이 차단한다. `exit-code: 1`, `ignore-unfixed: false`를 사용하며 자동 예외·실패 무시는 두지 않는다. LOW/MEDIUM은 이 차단 범위 밖이다. 도구 설정은 [Trivy 공식 안내](https://github.com/aquasecurity/trivy-action#usage)를 따른다.
-- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 허용한 예외는 저장소 루트 `.trivyignore.yaml`에 CVE별 사유·만료일(`expired_at`)과 함께 둔다. 만료일이 지나면 Trivy가 다시 차단한다. 현재 예외: CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19, 수정은 Spring Framework 7/Spring Boot 4에만 있음, 앱이 XsltView·SSE·view fragment를 쓰지 않음, 2026-11-20 승인, 만료 2026-12-31, 해제 작업 SEC-02). 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
+- 예외가 필요하면 해당 취약점의 영향·근거·보완책·담당자·만료일을 PR에 제시하고 명시적 검토를 거친다. 허용한 예외는 저장소 루트 `.trivyignore.yaml`에 CVE별 사유·만료일(`expired_at`)과 함께 둔다. 만료일이 지나면 Trivy가 다시 차단한다. 현재 이미지 취약점 예외는 없다. 2026-11-20에 승인한 CVE-2026-47884·CVE-2026-47890(spring-webmvc 6.2.19) 예외는 2026-11-23 Spring Boot 4 전환(SEC-02)으로 지웠다. 검사 실패를 우회하는 수동 배포 경로도 추가하지 않는다.
 - PR은 `pull_request`로 실행한다. 기본 권한은 `contents: read`이며 AWS secret을 참조하지 않는다. `id-token: write`와 AWS role 참조는 배포 job에만 둔다. [GitHub job 권한 기준](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idpermissions)을 따른다.
 - `main` push·수동 실행은 검사한 Docker 이미지를 1일 보존 artifact로 넘겨 배포 job에서 다시 빌드하지 않는다. 환경 간 digest 승격·승인은 CICD-02에서 검증한다.
 - 병합 차단을 보장하려면 저장소 ruleset/branch protection에서 `Test backend`, `Build and scan backend image`를 필수 검사로 등록해야 한다. 경로 필터로 workflow가 생략되는 문서 전용 PR의 처리도 함께 검토한다. 이번 로컬 수정으로 원격 저장소 설정을 바꾸지는 않았다.

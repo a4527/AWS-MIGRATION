@@ -194,6 +194,25 @@ resource "aws_sns_topic_subscription" "alarm_email" {
   endpoint  = each.value
 }
 
+# SEC-03: the Aurora security group rules and the routes are added by the
+# application layer as separate resources, so no drift check sees a manual
+# change to them. Report such changes as they happen (DEC-021).
+module "change_alerts" {
+  source = "../../modules/change-alerts"
+
+  name_prefix        = local.name_prefix
+  security_group_ids = [module.aurora.security_group_id]
+  route_table_ids = [
+    module.vpc.public_route_table_id,
+    module.vpc.private_route_table_id,
+    module.vpc.database_route_table_id,
+  ]
+  excluded_role_arn = module.terraform_ci.apply_role_arn
+  topic_arn         = aws_sns_topic.alarms.arn
+  force_destroy     = var.force_destroy_buckets
+  tags              = local.common_tags
+}
+
 # IAC-03: Terraform CI roles (plan/drift read-only, apply after approval).
 module "terraform_ci" {
   source = "../../modules/terraform-ci"

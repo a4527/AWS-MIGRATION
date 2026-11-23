@@ -1,19 +1,7 @@
 # Trivy exceptions (CICD-01). Each entry needs a reason and an expiry; after
 # expired_at Trivy reports the finding again and the pipeline blocks.
 # Review record: docs/design/DEPLOYMENT.md#pr이미지-검증과-차단-기준-cicd-01
-vulnerabilities:
-  - id: CVE-2026-47884
-    statement: >-
-      spring-webmvc 6.2.19 XsltView SSRF/RCE. Fixed only in Spring Framework 7.0.9
-      (Spring Boot 4). The app has no XsltView, no view rendering, and no /** view
-      mapping (REST JSON only). Approved 2026-11-20; remove with the Spring Boot 4 upgrade.
-    expired_at: 2026-12-31
-  - id: CVE-2026-47890
-    statement: >-
-      spring-webmvc 6.2.19 SSE stream corruption with view fragments. Fixed only in
-      Spring Framework 7.0.9. The app has no SSE endpoints and no view fragments.
-      Approved 2026-11-20; remove with the Spring Boot 4 upgrade.
-    expired_at: 2026-12-31
+vulnerabilities: []
 
 # IaC misconfigurations accepted for the lab (IAC-03). Reviewed 2026-11-20.
 misconfigurations:
@@ -40,10 +28,17 @@ misconfigurations:
       A customer managed key adds cost and key-policy work without a lab need.
     expired_at: 2027-05-31
   - id: AVD-AWS-0132
-    paths: ["modules/s3/main.tf", "bootstrap/main.tf"]
+    paths: ["modules/s3/main.tf", "bootstrap/main.tf", "modules/change-alerts/main.tf"]
     statement: >-
       SSE-S3 (AES256) encrypts the file and state buckets. A customer managed
       key would also need GuardDuty and replication key permissions.
+    expired_at: 2027-05-31
+  - id: AVD-AWS-0015
+    paths: ["modules/change-alerts/main.tf"]
+    statement: >-
+      SEC-03 (DEC-021): the trail exists to feed EventBridge; its S3 copy is kept
+      7 days with SSE-S3. A customer managed key adds a monthly key cost and a
+      key policy for CloudTrail without a lab need.
     expired_at: 2027-05-31
   - id: AVD-AWS-0095
     paths: ["environments/dev-data/main.tf"]
