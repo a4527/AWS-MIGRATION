@@ -31,13 +31,13 @@
 ## 다음 작업
 
 1. 개인 계정 bucket·IAM role·user 콘솔 삭제(사용자) → `terraform/environments/backup` 제거.
-2. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
-3. 프로젝트 종료 시 Terraform 밖 리소스(Container Insights 로그 그룹 등) 정리.
+2. 프로젝트 종료 시 Terraform 밖 리소스(Container Insights 로그 그룹 등) 정리.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-24 오후: 작업 상태 정리. SEC-01·CICD-01·FILE-05·OBS-02를 근거와 맞춰 완료로 고치고, FILE-02·FILE-04와 PORT-01의 비용 할당 태그 확인, FILE-01의 AWS 남은 범위는 미실행으로 닫았다(사용자 결정).
 - 2026-11-24 오후: ARCH-01 완료(설계 비교, 개선 3건 전후 측정), PERF-02 목록 커서 페이지 배포(API 호환성 깨짐, DEC-024), S3 gateway endpoint·deregistration delay 30초(DEC-026), 개인 계정 백업 철거(DEC-025). PR #13·#14 머지. PORT-02 완료(캡처 C27~C30).
 - 2026-11-24: 실습. PERF-01 기준선·확장 비교 완료, 메모리 정책이 축소를 막는 결함을 찾아 고쳤다(DEC-023). IAC-02 완료. 포트폴리오 캡처 구조(C01~C26)를 만들고 28장을 모두 반영했다. task 중지 재실행에서 중단이 6분 44초로 길어진 것을 기록했다(원인 미확인). 시험 데이터 7,183건 정리 후 실습 계층 destroy.
 - 2026-11-23: 실습. SEC-02(Boot 4 이미지 production 배포), IAC-03(drift 주입 → 탐지 47초 → 승인 apply 복구), CICD-03 drill B(production 런타임 실패 → smoke 감지 → 자동 롤백 3분 13초)를 마쳤다.
