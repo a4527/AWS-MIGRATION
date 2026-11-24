@@ -21,21 +21,6 @@
 
 - `architecture-overview.html`: 온프레미스·AWS 구성도, 패키지·계층 구조, 계층 의존성, 프로필 조합, 업로드 흐름, Terraform 모듈 의존성, CI/CD를 한 페이지로 정리한 브라우저용 문서. 2026-11-17 작업 트리 기준 요약이며 구조·책임 기준은 [DESIGN](../DESIGN.md)을 따른다.
 
-## 권장 배치 순서
+## 콘솔 캡처
 
-1. `portfolio-springboot-flow.png`
-2. `portfolio-docker-compose.png`
-3. `portfolio-aws-architecture.png`
-4. AWS Console 검증 캡처
-5. CloudWatch alarm/metric 캡처
-
-## 실제 콘솔 캡처가 필요한 이미지
-
-아래 항목은 실제 리소스 상태를 보여줘야 하므로 AWS Console 또는 CLI 결과 화면으로 캡처한다.
-
-- ECS service running/desired count와 deployment 상태
-- ALB target group health 상태
-- S3 object와 object tag 화면
-- Lambda Monitor 또는 CloudWatch log stream
-- CloudWatch alarm overview
-- ECS CPU, memory, network metric 화면
+실제 리소스 화면은 `captures/`에 둔다. 캡처 ID·파일명·콘솔 위치·시점·상태는 [포트폴리오 화면 캡처 목록](../PORTFOLIO.md#화면-캡처-목록)에서 관리하고, 본문 이미지 자리가 그 파일명을 가리킨다. 부하 시험 원본 데이터(CSV·k6 요약)는 `perf-01/`에 둔다.

@@ -1,4 +1,4 @@
-외부(고객사·면접)에 프로젝트 성과를 설명할 때 쓰는 근거 문서다. 2026-11-23에 실제 실행 결과 기준으로 다시 썼다. 모든 수치는 작업일지의 실측이며, 실행하지 않은 항목은 **미실행**으로 따로 적는다. 상세 계약·절차는 링크한 기준 문서를 따른다. 이전 포트폴리오 서술은 [이전 문서 요약](LEGACY.md)에 남겼다.
+외부(고객사·면접)에 프로젝트 성과를 설명할 때 쓰는 근거 문서다. 2026-11-23에 실제 실행 결과 기준으로 다시 썼고, 2026-11-24에 PERF-01 결과와 화면 캡처를 넣었다. 모든 수치는 작업일지의 실측이며, 실행하지 않은 항목은 **미실행**으로 따로 적는다. 상세 계약·절차는 링크한 기준 문서를 따른다. 이전 포트폴리오 서술은 [이전 문서 요약](LEGACY.md)에 남겼다.
 
 상태 표기: **완료**(실제 AWS·로컬에서 수용 기준 확인) / **구현**(코드·설정만, 실행 증빙 없음) / **미실행**(계획만).
 
@@ -18,7 +18,8 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 | 기능이 깨진 운영 배포 | smoke 감지 → 직전 revision 자동 롤백 **3분 13초** | health는 정상인데 기능이 깨진 경우도 복구 |
 | 인프라 drift | 수동 변경 **47초** 만에 탐지 → 승인 apply로 복구 | 코드와 실제의 차이를 놓치지 않음 |
 | 계정 밖 백업 | S3 복제 27초, DB dump 58초, 체크섬 일치 | 공유 계정이 지워져도 사본 유지 |
-| 장애 훈련에서 찾아 고친 결함 | 13건 | [8장](#8-검증하면서-찾아-고친-결함) |
+| 부하·확장 | 40 VU에서 처리량 59.4 → 72.9 rps(+23%), 오류 0 | task 1 → 3 자동 확장, 축소 결함을 찾아 고친 뒤 3 → 1 |
+| 검증에서 찾아 고친 결함 | 14건 | [8장](#8-검증하면서-찾아-고친-결함) |
 
 ## 2. 문제 정의와 제약
 
@@ -72,6 +73,12 @@ CloudWatch(지표·로그·대시보드·알람) ─▶ SNS ─▶ 이메일    
 | 캐시 | ElastiCache Redis `cache.t4g.micro` 1노드, 전송·저장 암호화 | 원본이 아닌 캐시라 단일 노드로 충분(장애 시 DB 우회) |
 | 파일 | S3, `files/` 접두어, 버전 관리·SSE-S3·퍼블릭 차단 | 앱·Lambda·GuardDuty 권한을 접두어로 제한 |
 
+![C05 ECS 서비스 목록](assets/captures/c05-ecs-services.png)
+*C05. 한 클러스터에 운영(`backend`)과 staging(`backend-staging`) 서비스(DEC-017).*
+
+![C11 ALB 리소스 맵](assets/captures/c11-alb-resource-map.png)
+*C11. ALB 리스너 → 규칙(`X-Deploy-Stage` 헤더면 staging) → 대상 그룹 2개 → 정상 대상.*
+
 ### 유지 계층과 실습 계층 (비용 구조의 핵심)
 
 Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 실습할 때 띄운다**(DEC-008).
@@ -121,6 +128,18 @@ Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 �
    PENDING → 409 FILE_SCAN_PENDING / INFECTED·FAILED → 403 FILE_QUARANTINED / CLEAN → S3 스트림 반환
 10. 같은 객체가 개인 계정 백업 bucket으로 복제(수 초~수 분)
 ```
+
+![C13 Lambda S3 트리거](assets/captures/c13-lambda-trigger.png)
+*C13. S3 `files/` ObjectCreated → Lambda `file-processor`(7a).*
+
+![C14 GuardDuty S3 악성코드 보호](assets/captures/c14-guardduty-plan.png)
+*C14. 파일 bucket `files/` 접두어 보호 플랜(7b).*
+
+![C25 S3 객체 태그](assets/captures/c25-s3-object-tags.png)
+*C25. 정상 업로드 객체: `GuardDutyMalwareScanStatus = NO_THREATS_FOUND`, Lambda의 `extension-check`·크기·타입 태그.*
+
+![C25b 감염 객체 태그](assets/captures/c25b-s3-threat-tags.png)
+*C25b. EICAR 시험 객체(2026-11-20): `GuardDutyMalwareScanStatus = THREATS_FOUND`. 이 파일은 다운로드가 403으로 막힌다.*
 
 ### 실패할 때 어떻게 되는가
 
@@ -175,6 +194,9 @@ terraform/
 - drift 시험(2026-11-23): 알람 임계값을 CLI로 바꾸자 **47초** 만에 `drift (dev)` 실패와 변경 1건 표시 → 같은 run의 승인 apply로 복구 → 재검사 통과.
 - drift 검사가 원리상 못 보는 영역(다른 계층이 별도 리소스로 붙인 보안 그룹 규칙·경로)은 CloudTrail → EventBridge로 **API 호출 자체**를 감시해 메웠다(SEC-03, [9장](#9-보안)).
 
+![C24 Terraform drift 실행](assets/captures/c24-terraform-drift.png)
+*C24. `drift (dev)` 실패와 변경 리소스 → 같은 run의 승인 apply(2026-11-23).*
+
 ## 7. CI/CD 파이프라인
 
 ### 애플리케이션 (`.github/workflows/backend-ci-cd.yml`)
@@ -204,6 +226,12 @@ main push / 수동 실행
 
 소요(2026-11-23 실측): test 24초, build·scan 1분 38초, staging 배포·smoke 2분 24초~3분 48초, production 4분 33초(운영 target group deregistration delay 300초가 주 원인, 단축 후보).
 
+![C22 배포 파이프라인 실행](assets/captures/c22-actions-pipeline.png)
+*C22. test → image → publish → staging → production 승인 → production.*
+
+![C23 drill B 자동 롤백](assets/captures/c23-drill-b-rollback.png)
+*C23. production smoke 실패 → "Rolling production back" → 롤백 성공, `latest` 갱신 건너뜀(2026-11-23).*
+
 ## 8. 검증하면서 찾아 고친 결함
 
 "한 번에 됐다"가 아니라 **훈련이 결함을 찾아냈고 고쳤다**는 것이 이 프로젝트의 핵심 성과다.
@@ -223,6 +251,7 @@ main push / 수동 실행
 | 11 | drill A | circuit breaker 롤백이 알림 없이 끝남 | ECS 배포 실패 이벤트 → SNS |
 | 12 | 정기 drift | 계층이 공유하는 SG·경로 때문에 매일 오탐 | `-refresh-only` 대신 일반 plan |
 | 13 | 위 수정 분석 | 별도 리소스로 붙인 SG 규칙 변경을 어떤 검사도 못 봄 | CloudTrail 기반 변경 알림(SEC-03) |
+| 14 | PERF-01 | 확장 뒤 메모리 정책(JVM 힙 유지)이 축소를 막아 46분 넘게 3 task(비용 3배) | 메모리 정책 확장 전용(`disable_scale_in`), 수정 뒤 3 → 1(DEC-023) |
 
 작업 방식 사고도 기록했다: 로컬 apply 뒤 늦게 push한 커밋 때문에 CI가 코드 기준으로 규칙 2개를 지웠다. 교훈은 "CI가 apply하는 계층은 머지 → CI apply 순서"이고, 이후 지켰다([작업일지](worklogs/2026-11-20.md#첫-승격-배포와-ci-사고)).
 
@@ -246,6 +275,12 @@ main push / 수동 실행
 
 **알려진 한계**: 도메인이 없어 실습은 HTTP다(도메인 변수만 넣으면 TLS 1.3 정책 HTTPS + 리다이렉트). WAF·VPC endpoint 미적용. 토큰 갱신·로그아웃 API 미구현. staging과 운영이 데이터 계층을 공유한다(헤더 라우팅은 보안 경계 아님).
 
+![C12 작업 정의 개요](assets/captures/c12-taskdef-secrets.png)
+*C12. 운영 서비스가 쓰는 작업 정의 `fileshare-dev-backend:16`: task role·execution role 분리, 0.5 vCPU / 1GB.*
+
+![C12b 환경 변수와 보안 암호](assets/captures/c12b-taskdef-secrets.png)
+*C12b. `DB_PASSWORD`·`APP_JWT_SECRET`은 `valueFrom`(SSM 파라미터 ARN)이고 나머지 환경 변수에 비밀값이 없다. 엔드포인트·bucket 이름은 가렸다.*
+
 ## 10. 모니터링·로그·알람
 
 ### 무엇을 보는가 (대시보드 `fileshare-dev-service`)
@@ -261,6 +296,12 @@ main push / 수동 실행
 | Lambda | 호출·오류·Duration p95 | 후처리 상태 |
 | 알람 | 전체 알람 상태 | 한 화면 판단 |
 | 경로별 SLI | Logs Insights 위젯 | API별 품질 |
+
+![C01 서비스 대시보드](assets/captures/c01-dashboard.png)
+*C01. 대시보드 `fileshare-dev-service`, PERF-01 시간대(2026-11-24 09:40~10:10 KST): 부하 두 번, task 1 → 2 → 3.*
+
+![C02 경로별 SLI 표](assets/captures/c02-sli-table.png)
+*C02. 같은 대시보드의 경로별 요청 수·성공률·p50/p95.*
 
 ### SLI·SLO (실습 세션 단위, [VALIDATION 11장](design/VALIDATION.md#11-관측-지표와-sli))
 
@@ -290,6 +331,15 @@ main push / 수동 실행
 - 데이터 없음은 정상(`notBreaching`)으로 본다(요청이 없으면 5xx 지표도 없다). 예외는 `alb-no-healthy-target`.
 - 감지는 즉시가 아니다: 지표 지연 1~2분 + 평가 주기. OK 복귀는 6~8분. 알람별 진단·복구·에스컬레이션 런북은 [DEPLOYMENT 4.11-1](design/DEPLOYMENT.md#411-1-알람-대응-obs-02).
 
+![C10 알람 목록](assets/captures/c10-alarm-list.png)
+*C10. 운영 알람 전체와 Auto Scaling이 만든 target tracking 알람.*
+
+![C15 알람 기록](assets/captures/c15-alarm-history.png)
+*C15. task 중지 주입 때 `alb-elb-5xx`의 OK → ALARM → OK와 "Successfully executed action".*
+
+![C16 알람 이메일](assets/captures/c16-alarm-email.png)
+*C16. 같은 알람의 ALARM·OK 이메일.*
+
 ### 로그를 어떻게 쓰는가
 
 | 로그 | 보존 | 쓰임 |
@@ -299,6 +349,12 @@ main push / 수동 실행
 | ECS task 중지 이벤트 `/aws/events/...-ecs-task-stopped` | 14일 | ECS가 1시간 뒤 지우는 중지 사유(exit code, health 실패)를 보존 |
 | Lambda·DB dump task 로그 | 14일 | 후처리·백업 실패 원인 |
 | CloudTrail trail(쓰기 관리 이벤트) | 7일 | 누가 무엇을 바꿨나, 변경 알림의 원천 |
+
+![C03 요청 ID로 로그 추적](assets/captures/c03-request-trace.png)
+*C03. 저장 쿼리 `request-trace`: 요청 ID 하나의 JSON 로그 줄.*
+
+![C04 응답 헤더 X-Request-Id](assets/captures/c04-curl-request-id.png)
+*C04. `curl -D -` 응답의 `X-Request-Id`가 C03과 같은 값.*
 
 로그 유실 점검: 분당 접근 로그 수 = ALB RequestCount(차이는 health check 분당 2회). 이후 계획: 로그 기반 지표 필터(예: `Compensating object delete failed` 건수), 5xx 비율 알람, 장기 보존은 S3 내보내기.
 
@@ -330,8 +386,51 @@ main push / 수동 실행
 | DB PITR 복원 | - | - | RPO 104초 / RTO 15.2분, 행 수·객체·크기·해시 일치 |
 | S3 삭제 복구 | - | - | 15초, 같은 해시 |
 | 공유 계정이 Aurora를 외부에서 정지(실제 사건) | 실습 시작 시 DB 연결 불가 | dump task timeout | `start-db-cluster` 약 5분. 백업이 필요한 이유의 실례 |
+| 운영 task 강제 중지 재실행(11-24) | 약 6분 44초 503/502 | `alb-elb-5xx` 약 3분, `alb-no-healthy-target` 약 4분 40초(2분 넘는 중단의 발화 첫 확인) | 이전 task 연결 정리(deregistration delay 300초)가 끝난 뒤에야 새 task 시작. 11-20(87초)과 차이 원인 미확인 |
+
+![C17 task 중지 시간대 대시보드](assets/captures/c17-task-stop-dashboard.png)
+*C17. 운영 task 강제 중지(2026-11-24 11:51 KST): ELB 5xx 급증, healthy 0 → 1 회복.*
+
+![C18 ECS 서비스 이벤트(복구)](assets/captures/c18-task-stop-events.png)
+*C18. stopped → started → registered 순서.*
+
+![C19 CloudTrail StopTask](assets/captures/c19-cloudtrail-stoptask.png)
+*C19. 의도한 장애 주입 호출(시각·호출자).*
+
+### 부하·확장 실측 (PERF-01, 2026-11-24)
+
+AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 조회 70%·목록 20%·100KB 업로드 10%를 같은 조건으로 두 번 실행했다.
+
+| 조건 | 처리량 | 오류율 | 읽기 p50 / p95 | 업로드 p50 / p95 | task |
+| --- | --- | --- | --- | --- | --- |
+| 기준선: task 1개 고정 | 59.4 rps | 0% | 207ms / 1.78s | 520ms / 1.69s | 1 (CPU 100% 포화) |
+| Auto Scaling 1~4 | 72.9 rps (+23%) | 0% | 82ms / 1.78s | 199ms / 2.20s | 40초 만에 2, 종료 직전 3 |
+
+- 목록 API에 페이지 처리가 없어, 시험 중 쌓이는 파일 수만큼 목록 응답이 무거워진다(기준선 분당 요청 5,623 → 2,375). p95가 줄지 않은 주원인이다.
+- 확장 후 task가 46분 넘게 줄지 않았다: CPU 1%여도 JVM 메모리가 47%로 남아 메모리 정책이 축소를 막았다. 메모리 정책의 축소를 끄자(`disable_scale_in`) 적용 7초 뒤 3 → 2, 6분 뒤 2 → 1로 줄었다([작업일지](worklogs/2026-11-24.md)).
+
+![C06 Auto Scaling 정책](assets/captures/c06-scaling-policy.png)
+*C06. CPU 60%·메모리 70% target tracking, 최소 1·최대 4.*
+
+![C07 확장 이벤트](assets/captures/c07-scale-out-events.png)
+*C07. 서비스 이벤트: 09:55·10:04 KST task 추가와 대상 등록.*
+
+![C08 축소가 막힌 상태](assets/captures/c08-scale-in-blocked.png)
+*C08. 부하 종료 후 CPU 1%, 메모리 47% 유지, task 3개(수정 전).*
+
+![C09 축소 알람](assets/captures/c09-alarm-low.png)
+*C09. CPU·메모리 `AlarmLow` 둘 다 ALARM인데 축소 활동 없음(수정 전).*
+
+![C20 축소 활동](assets/captures/c20-scale-in.png)
+*C20. 수정 후 3 → 1 축소 활동.*
+
+![C21 확장·축소 한 주기](assets/captures/c21-scaling-cycle.png)
+*C21. task 수 1 → 3 → 1 전체 주기.*
 
 목표: RPO 5분 / RTO 1시간(DEC-020). 기준과 절차는 [백업 복원](design/DEPLOYMENT.md#412-1-백업-복원-ops-02), [개인 계정 백업](design/DEPLOYMENT.md#412-2-개인-계정-백업-backup-01).
+
+![C26 원본·백업 객체 비교](assets/captures/c26-backup-compare.png)
+*C26. 원본 `COMPLETED`, 개인 계정 사본 `REPLICA`, 같은 SHA-256.*
 
 ## 12. 비용
 
@@ -372,7 +471,7 @@ main push / 수동 실행
 | 배포 통제 | drill A(기동 실패)·drill B(기능 실패) | 둘 다 자동 롤백 |
 | IaC | PR plan, 승인 apply, drift 주입·복구, 잠금·state 복구 | 통과 |
 | 백업 | 복제·삭제 미반영·dump·체크섬·경계 | 통과 |
-| 부하·확장 | k6 기준선(task 1) vs Auto Scaling(1~4) | **미실행**(PERF-01) |
+| 부하·확장 | k6 기준선(task 1) vs Auto Scaling(1~4) | **완료**(PERF-01). 처리량 +23%, 축소 결함 발견·수정. 목록 API 페이지 처리 없음이 p95 한계 |
 
 시나리오 정의와 판정 기준은 [VALIDATION](design/VALIDATION.md).
 
@@ -392,7 +491,8 @@ main push / 수동 실행
 
 | 항목 | 상태 | 계획 |
 | --- | --- | --- |
-| 부하·확장 실험(PERF-01) | **미실행**(스크립트 준비) | k6로 task 1 기준선 vs 1~4 확장, 처리량·p95·확장/축소 시각 |
+| 부하·확장(PERF-01) | 완료(2026-11-24). 목록 API가 페이지 처리 없이 전체를 반환해 데이터가 쌓이면 느려짐 | 목록 API 페이지 처리, 재측정 |
+| task 교체 중단 | 2026-11-24 재실행에서 약 6분 44초(11-20 87초), 원인 미확인 | 운영 deregistration delay 300초 → 30~60초, 최소 task 2 |
 | 비용·설계 비교(ARCH-01) | **미실행** | NAT 1 vs AZ별, S3 endpoint, ECS 중계 vs presigned URL, Aurora vs RDS를 측정 근거로 |
 | 단일 AZ 요소 | NAT·Redis·Aurora 인스턴스 | 운영 전환 시 AZ별 NAT, Redis 복제본, Aurora reader |
 | HTTPS | 도메인 없음 | 변수 2개로 활성화(코드 준비됨) |
@@ -407,9 +507,9 @@ main push / 수동 실행
 2. **아키텍처**(4분): 3장 그림. 계층 분리, 같은 이미지가 프로필로 환경을 바꾼다는 점.
 3. **E2E 흐름**(3분): 업로드 → 비동기 검사 → 검사 전 다운로드 차단. 실패 표에서 "결과 불명이면 지우지 않는다".
 4. **배포 파이프라인**(4분): digest 하나가 staging → 승인 → production. drill B 3분 13초 롤백을 화면으로.
-5. **운영**(4분): 대시보드·SLI·알람 기준과 이유. 장애 훈련 표와 찾은 결함 13건.
+5. **운영**(4분): 대시보드·SLI·알람 기준과 이유. 장애 훈련 표, 부하 시험에서 찾은 축소 결함, 찾은 결함 14건.
 6. **보안·비용**(2분): 장기 키 0개, 비밀값 state 밖, 쉬는 비용 월 $1 미만.
-7. **한계와 다음 단계**(1분): 단일 AZ 요소와 PERF·ARCH가 남았다고 먼저 말한다.
+7. **한계와 다음 단계**(1분): 단일 AZ 요소, 목록 API 페이지 처리, ARCH-01이 남았다고 먼저 말한다.
 
 ## 17. 증빙
 
@@ -433,30 +533,47 @@ main push / 수동 실행
 | IaC CI·drift | IAC-01/03 | 완료 | [11-23](worklogs/2026-11-23.md#실습-sec-02-배포iac-03-driftcicd-03-drill-b) |
 | 비밀값·공급망·변경 감시 | SEC-01/02/03 | 완료 | [11-20](worklogs/2026-11-20.md#sec-01-비밀값-주입), [11-23](worklogs/2026-11-23.md#sec-03-terraform-밖-네트워크-변경-알림) |
 | 계정 밖 백업 | BACKUP-01 | 완료 | [11-23](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
-| 부하·비용 비교 | PERF-01, ARCH-01 | 미실행 | - |
+| 부하·확장 | PERF-01 | 완료 | [11-24](worklogs/2026-11-24.md#perf-01-부하확장-v-perf-03) |
+| 비용·설계 비교 | ARCH-01 | 미실행 | - |
 
 ### 화면 캡처 목록
 
-1~9번과 14~16번은 실습 계층을 destroy하면 대시보드·알람·로그가 함께 지워지므로 실습 계층이 떠 있을 때 캡처한다. 지표는 남지만 대시보드를 다시 만들어야 볼 수 있다. 계정 ID, 이메일, ALB DNS, bucket 이름은 가린다. 이미지는 `docs/assets/`에 두고 이 표에서 연결한다.
+캡처는 `docs/assets/captures/`에 **아래 파일명 그대로** PNG로 저장한다(Windows 탐색기: `\\wsl.localhost\Ubuntu-24.04\home\taemin\AWS-MIGRATION\docs\assets\captures\`). 본문의 이미지 자리가 이 파일명을 가리키므로 저장하면 해당 장에 바로 보인다. 파일이 없는 동안은 깨진 이미지로 보이며 상태 열이 "대기"다. 저장 전 계정 ID·이메일·ALB DNS·bucket 이름을 가린다.
 
-| # | 화면 | 꼭 보여야 하는 것 | 증명하는 것 | 작업 |
-| --- | --- | --- | --- | --- |
-| 1 | CloudWatch 대시보드 `<prefix>-service` 전체 | 트래픽이 있는 시간대의 그래프, 알람 위젯 | 관측 체계 | OBS-01 |
-| 2 | 대시보드 하단 SLI 표 | 경로별 요청 수·성공률·p50/p95 | 경로별 SLI 측정 | OBS-01 |
-| 3 | Logs Insights `request-trace` 결과 | 같은 `requestId`의 로그 줄(JSON 필드) | 요청 단위 추적 | OBS-01 |
-| 4 | 터미널 `curl -D -` 응답 | `X-Request-Id` 헤더(3번과 같은 값) | 사용자 응답과 서버 로그의 연결 | OBS-01 |
-| 5 | 알람 상세 기록 탭 | OK → ALARM → OK, "Successfully executed action" | 알람 발화와 SNS 발송 | OBS-02 |
-| 6 | 받은 알람 이메일(ALARM, OK) | 알람 이름·시각 | 실제 수신 | OBS-02 |
-| 7 | 대시보드의 task 중지 시간대 | ELB 5xx 급증, healthy 수 0 → 1 회복 | 장애 시 자동 복구 | VERIFY-02 |
-| 8 | ECS 서비스 이벤트 탭 | stopped → started → registered 순서 | 복구 과정 | VERIFY-02 |
-| 9 | CloudTrail `StopTask` 이벤트 | 시각·사용자 | 의도한 장애 주입 | VERIFY-02 |
-| 10 | GitHub Actions 실행 화면 | test → scan → publish → staging → production 승인 | CI/CD 파이프라인 | CICD-01/02 |
-| 11 | ECS 작업 정의 컨테이너 설정 | `secrets`에 SSM ARN만 있고 환경변수에 비밀번호 없음 | 비밀값 관리 | SEC-01 |
-| 12 | S3 객체 태그 탭 | `GuardDutyMalwareScanStatus`, `extension-check` | 검사와 후처리 | FILE-03 |
-| 13 | Application Auto Scaling 정책 | CPU 60%, 메모리 70%, min 1 / max 4 | 확장 정책(실제 확장 증빙은 PERF-01) | PERF-01 |
-| 14 | drill B run 화면 | production smoke 실패 → "Rolling production back" → 롤백 성공, `latest` 건너뜀 | 기능 실패 자동 롤백 | CICD-03 |
-| 15 | Terraform drift run summary | `drift (dev)` 실패와 변경 리소스, 승인 apply | drift 탐지·복구 | IAC-03 |
-| 16 | 원본·백업 객체 비교 | 원본 `COMPLETED`, 사본 `REPLICA`, 같은 SHA-256 | 계정 밖 백업 | BACKUP-01 |
+시점: **지금** = 실습 계층이 떠 있고 이미 데이터가 있음(destroy하면 사라짐) / **주입 후** = 운영 task 중지 주입 뒤(약 2분 중단) / **수정 후** = 축소 결함 수정 뒤 / **언제든** = destroy 후에도 남음. 시간 범위는 PERF-01 화면이면 2026-11-24 09:40~10:10 KST(절대 시간).
+
+| ID | 파일 | 콘솔 위치 | 꼭 보일 것 | 넣는 곳 | 시점 | 상태 |
+| --- | --- | --- | --- | --- | --- | --- |
+| C01 | `c01-dashboard.png` | CloudWatch → 대시보드 `fileshare-dev-service` 위쪽 | 부하 두 번, task 1 → 2 → 3 | [10장](#10-모니터링로그알람) | 지금 | 완료 |
+| C02 | `c02-sli-table.png` | 같은 대시보드 아래 | 경로별 요청 수·성공률·p50/p95 | 10장 | 지금 | 완료 |
+| C03 | `c03-request-trace.png` | CloudWatch → Logs Insights → 저장 쿼리 `fileshare-dev/request-trace` | 요청 ID 하나의 JSON 로그 줄 | 10장 | 지금 | 완료 |
+| C04 | `c04-curl-request-id.png` | 터미널 | `X-Request-Id`가 C03과 같은 값 | 10장 | 지금 | 완료 |
+| C05 | `c05-ecs-services.png` | ECS → 클러스터 `fileshare-dev-ecs` → 서비스 | 운영·staging 서비스 2개 | [3장](#3-아키텍처) | 지금 | 완료 |
+| C06 | `c06-scaling-policy.png` | 서비스 `fileshare-dev-backend` → 서비스 Auto Scaling | CPU 60·메모리 70, 최소 1·최대 4 | [11장](#11-고가용성과-회복탄력성) | 지금 | 완료 |
+| C07 | `c07-scale-out-events.png` | 같은 서비스 → 이벤트 | 09:55·10:04 KST task 시작·대상 등록 | 11장 | 지금 | 완료 |
+| C08 | `c08-scale-in-blocked.png` | 대시보드 ECS 위젯, 시간 범위 09:40~현재 | CPU 1%, 메모리 47% 평평, task 3 | 11장 | 지금(수정 전) | 완료 |
+| C09 | `c09-alarm-low.png` | CloudWatch → 경보 → `TargetTracking-...AlarmLow` 2개 | 둘 다 ALARM | 11장 | 지금(수정 전) | 완료 |
+| C10 | `c10-alarm-list.png` | CloudWatch → 경보 → 모든 경보 | 운영 알람 목록 | 10장 | 지금 | 완료 |
+| C11 | `c11-alb-resource-map.png` | EC2 → 로드 밸런서 `fileshare-dev-alb` → 리소스 맵 | 리스너 → 규칙 → 대상 그룹 2개 → 정상 대상 | 3장 | 지금 | 완료 |
+| C12 | `c12-taskdef-secrets.png` | ECS → 작업 정의 `fileshare-dev-backend:16` | 개정 번호, task·execution role | [9장](#9-보안) | 지금 | 완료 |
+| C12b | `c12b-taskdef-secrets.png` | 같은 개정 → 컨테이너 `backend` → 환경 및 보안 암호 | `valueFrom` 두 개(SSM ARN), 나머지 값에 비밀값 없음 | 9장 | 지금 | 완료 |
+| C13 | `c13-lambda-trigger.png` | Lambda `fileshare-dev-file-processor` → 개요 | S3 트리거 → 함수 | [5장](#5-end-to-end-흐름) | 지금 | 완료 |
+| C14 | `c14-guardduty-plan.png` | GuardDuty → S3용 악성코드 보호 | 파일 bucket 보호 플랜 | 5장 | 지금 | 완료 |
+| C15 | `c15-alarm-history.png` | 경보 `fileshare-dev-alb-elb-5xx` → 기록 | OK → ALARM → OK, "Successfully executed action" | 10장 | 주입 후 | 완료 |
+| C16 | `c16-alarm-email.png` | 메일함 | ALARM·OK 이메일 | 10장 | 주입 후 | 완료 |
+| C17 | `c17-task-stop-dashboard.png` | 대시보드, 주입 시간대 | ELB 5xx 급증, healthy 0 → 1 | 11장 | 주입 후 | 완료 |
+| C18 | `c18-task-stop-events.png` | 서비스 → 이벤트 | stopped → started → registered | 11장 | 주입 후 | 완료 |
+| C19 | `c19-cloudtrail-stoptask.png` | CloudTrail → 이벤트 기록, 이름 `StopTask` | 시각·호출자 | 11장 | 주입 후(90일 남음) | 완료 |
+| C20 | `c20-scale-in.png` | 서비스 → 이벤트 또는 Auto Scaling 활동 | 3 → 1 축소 | 11장 | 수정 후 | 완료 |
+| C21 | `c21-scaling-cycle.png` | 대시보드 task 수 위젯, 09:40~축소 후 | 1 → 3 → 1 | 11장 | 수정 후 | 완료 |
+| C22 | `c22-actions-pipeline.png` | GitHub Actions `backend-ci-cd` 성공 run | test → … → production 승인 | [7장](#7-cicd-파이프라인) | 언제든 | 완료 |
+| C23 | `c23-drill-b-rollback.png` | GitHub Actions run 45124235577 | smoke 실패 → 롤백 성공 | 7장 | 언제든 | 완료 |
+| C24 | `c24-terraform-drift.png` | GitHub Actions run 45123423656 summary | `drift (dev)` 실패·변경 1건, 승인 apply | [6장](#6-iac-terraform-구성과-운영-방식) | 언제든 | 완료 |
+| C25 | `c25-s3-object-tags.png` | S3 → 파일 bucket → `files/` 객체 → 태그 | `GuardDutyMalwareScanStatus`, Lambda 태그 | 5장 | 언제든 | 완료 |
+| C25b | `c25b-s3-threat-tags.png` | S3 → 파일 bucket → EICAR 시험 객체(11-20) → 태그 | `GuardDutyMalwareScanStatus = THREATS_FOUND` | 5장 | 언제든 | 완료 |
+| C26 | `c26-backup-compare.png` | 터미널 `head-object`(원본·사본) | `COMPLETED`/`REPLICA`, 같은 SHA-256 | 11장 | 언제든 | 완료 |
+
+ALB의 리스너·네트워크 매핑·보안·모니터링 탭과 개별 지표 화면은 캡처하지 않는다. 같은 내용을 2026-11-24 [작업일지](worklogs/2026-11-24.md)의 구성 스냅숏 표와 `assets/perf-01/` 원본 데이터로 남긴다.
 
 ## 관련 문서
 

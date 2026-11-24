@@ -1,0 +1,13 @@
+00:54:42Z === PERF-01 scaling: scalable target min 1 max 4
+00:54:55Z k6 task started
+00:55:00Z   backend desired=1 running=1
+00:55:40Z   backend desired=2 running=1
+00:56:19Z   backend desired=2 running=2
+01:04:38Z   backend desired=3 running=2
+01:04:58Z k6 exit 0
+01:05:11Z   PERF_SUMMARY {"requests":39434,"rps":72.91599180958012,"error_rate":0,"read_p50":81.638885,"read_p95":1784.0868972000005,"read_p99":3791.998467,"upload_p50":199.468344,"upload_p95":2204.045447199999}
+01:05:13Z   scaling 10:04:30 ->  InProgress Setting desired count to 3.
+01:05:13Z   scaling 09:55:30 -> 09:56:35 Successful Setting desired count to 2.
+01:05:15Z   CPUUtilization max/min: 09:54=1 09:55=59 09:56=100 09:57=100 09:58=100 09:59=100 10:00=100 10:01=100 10:02=100 10:03=100
+01:05:17Z   RunningTaskCount max/min: 09:54=1 09:55=1 09:56=1 09:57=2 09:58=2 09:59=2 10:00=2 10:01=2 10:02=2 10:03=2
+01:05:20Z window 00:54:52Z -> 01:04:58Z

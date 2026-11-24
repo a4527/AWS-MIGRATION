@@ -2,7 +2,7 @@
 
 Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 운영 기준선을 만든 뒤, 같은 API·데이터 계약을 유지한 채 Terraform으로 구성한 AWS로 옮기는 프로젝트입니다.
 
-온프레미스 기준선, AWS 배포·계약 비교, 장애 주입·복원·배포 롤백·drift·계정 밖 백업 검증까지 마쳤습니다(2026-11-23). 남은 것은 부하·확장 실험(PERF-01)과 비용·설계 비교(ARCH-01)입니다. 성과 요약은 [포트폴리오](docs/PORTFOLIO.md), 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
+온프레미스 기준선, AWS 배포·계약 비교, 장애 주입·복원·배포 롤백·drift·계정 밖 백업, 부하·확장 실험(PERF-01)까지 마쳤습니다(2026-11-24). 남은 것은 비용·설계 비교(ARCH-01)입니다. 성과 요약은 [포트폴리오](docs/PORTFOLIO.md), 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
 
 ![AWS Architecture](docs/assets/portfolio-aws-architecture.png)
 
