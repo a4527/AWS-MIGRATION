@@ -574,8 +574,9 @@ AWS Pricing API로 조회한 정가 기준 추정이다. 가정: AZ 2개, 상시
 
 | 자료 | 내용 | 비고 |
 | --- | --- | --- |
-| [아키텍처 페이지](assets/architecture-overview.html) | 온프레미스·AWS 구성도, 패키지·계층·의존성, 업로드 흐름, Terraform 모듈, CI/CD | GuardDuty·staging·S3 gateway endpoint 이전 그림. 갱신 필요 |
-| ![AWS Architecture](assets/portfolio-aws-architecture.png) | AWS 구성 | 위와 같음 |
+| [애플리케이션·온프레미스 구조](assets/architecture-overview.html) | Compose 구성·실행 흐름, 패키지·계층·의존성, 요청 처리(필터·JWT·포트·어댑터), 프로필별 빈, 업로드 흐름 | 2026-11-24 기준. 게시본 「File Share API 아키텍처」 |
+| [AWS 이전 기록](assets/aws-migration.html) | 온프레미스→AWS 대응, AWS 구성도, 이전 단계, IaC·CI/CD, 결함, 보안, 관측, 회복탄력성, 비용·설계 비교, 캡처 C01~C30 | 2026-11-24 기준, 캡처를 파일 안에 내장(단독으로 열림). 게시본 「File Share AWS 이전 기록」 |
+| ![AWS Architecture](assets/aws-architecture.png) | AWS 구성도(위 페이지 그림을 PNG로) | 루트 README에도 사용 |
 
 ### 작업별 근거
 
