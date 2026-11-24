@@ -7,7 +7,6 @@ import com.example.fileshare.file.application.FileService;
 import com.example.fileshare.file.application.FileUploadService;
 import com.example.fileshare.file.application.UploadOutcome;
 import java.nio.charset.StandardCharsets;
-import java.util.List;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -55,10 +54,12 @@ public class FileController {
     }
 
     @GetMapping
-    public ApiResponse<List<FileResponse>> listMine(@AuthenticationPrincipal AuthUserPrincipal principal) {
-        return ApiResponse.ok(fileService.listMine(principal.toActor()).stream()
-                .map(FileResponse::from)
-                .toList());
+    public ApiResponse<FileListResponse> listMine(
+            @AuthenticationPrincipal AuthUserPrincipal principal,
+            @RequestParam(required = false) String cursor,
+            @RequestParam(required = false) String size
+    ) {
+        return ApiResponse.ok(FileListResponse.from(fileService.listMine(principal.toActor(), cursor, size)));
     }
 
     @GetMapping("/{id}")

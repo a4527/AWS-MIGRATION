@@ -4,5 +4,6 @@
 | --- | --- | --- |
 | [데이터 이전 방식](DATA-MIGRATION.md) | A 채택([DEC-007](../DECISIONS.md#결정-목록)), B·C·D 미채택 보존 | MIG-01, MIG-02 |
 | [개인 계정 백업](CROSS-ACCOUNT-BACKUP.md) | B + B-2 채택([DEC-012](../DECISIONS.md#결정-목록)), A·C·D·B-1 미채택 보존 | BACKUP-01, OPS-02 |
+| [설계 비교(ARCH-01)](ARCH-COMPARISON.md) | 비교 중, 측정 개선 3건(S3 gateway endpoint·deregistration delay·목록 페이지 처리)은 2026-11-24 실습에서 전후 측정 | ARCH-01, PERF-01 |
 
-[AWS 운영 한계](../design/AWS.md#현재-한계) 중 비교가 필요한 대안은 ARCH-01에서 조사하며, 조사 시 주제 파일을 추가해 이 목록에 연결한다.
+[AWS 운영 한계](../design/AWS.md#현재-한계) 중 비용·가용성·전송 경로 대안은 [설계 비교](ARCH-COMPARISON.md)에서 다룬다. 새 비교 주제는 주제 파일을 추가해 이 목록에 연결한다.

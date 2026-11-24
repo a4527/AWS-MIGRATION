@@ -15,7 +15,11 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "files", indexes = @Index(name = "idx_files_storage_path", columnList = "storage_path"))
+@Table(name = "files", indexes = {
+        @Index(name = "idx_files_storage_path", columnList = "storage_path"),
+        // 목록 커서 페이지 처리(PERF-02): owner_id 조건 + id 내림차순을 인덱스로 끝낸다.
+        @Index(name = "idx_files_owner_id_id", columnList = "owner_id, id")
+})
 public class FileMetadataEntity {
 
     @Id

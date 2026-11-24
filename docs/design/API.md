@@ -357,24 +357,33 @@ description: project plan
 ### `GET /api/files`
 
 - 인증 필요 여부: 예
-- 설명: 접근 가능한 파일 목록을 조회한다.
+- 설명: 본인 파일 중 삭제되지 않은 것을 최신순(`fileId` 내림차순)으로 한 페이지씩 조회한다(PERF-02, [DEC-024](../DECISIONS.md#결정-목록)). 2026-11-24 이전에는 페이지 없이 전체를 배열로 돌려줬다.
+- 쿼리 파라미터:
+  - `size`(선택): 1~100, 기본 20
+  - `cursor`(선택): 이전 응답의 `nextCursor`. 없으면 첫 페이지
+- `nextCursor`는 불투명 문자열로 다룬다. 마지막 페이지면 `null`이다. 페이지 사이에 새로 올린 파일은 다음 페이지에 끼어들지 않고, 삭제된 파일은 빠진다(keyset 방식, 전체 개수는 주지 않는다).
+
+요청 예시: `GET /api/files?size=2&cursor=4812`
 
 응답 예시:
 
 ```json
 {
   "success": true,
-  "data": [
-    {
-      "fileId": 100,
-      "originalFileName": "design.pdf",
-      "size": 1048576,
-      "mimeType": "application/pdf",
-      "status": "available",
-      "scanStatus": "CLEAN",
-      "createdAt": "2026-06-30T00:00:00Z"
-    }
-  ],
+  "data": {
+    "items": [
+      {
+        "fileId": 4811,
+        "originalFileName": "design.pdf",
+        "size": 1048576,
+        "mimeType": "application/pdf",
+        "status": "available",
+        "scanStatus": "CLEAN",
+        "createdAt": "2026-06-30T00:00:00Z"
+      }
+    ],
+    "nextCursor": "4811"
+  },
   "message": "OK"
 }
 ```
@@ -382,6 +391,7 @@ description: project plan
 주요 에러 코드:
 
 - `AUTH_INVALID_TOKEN`
+- `VALIDATION_ERROR`(400): `size`가 1~100 밖이거나 숫자가 아님, `cursor`가 양의 정수가 아님
 
 ### `GET /api/files/{id}`
 
@@ -539,7 +549,7 @@ description: project plan
 | `GET /api/users/me`, `PATCH /api/users/me` | 구현 | 이름만 수정 |
 | `GET /api/users/{id}` | 구현 | `ADMIN`만 |
 | `POST /api/files` | 구현 | 허용 확장자 `pdf`·`png`·`jpg`·`jpeg`·`txt`·`csv`, 최대 10MiB, 선택 `Idempotency-Key` |
-| `GET /api/files` | 구현 | 본인 소유, 삭제 제외 |
+| `GET /api/files` | 구현 | 본인 소유, 삭제 제외, 커서 페이지(`size` 기본 20·최대 100) |
 | `GET /api/files/{id}`, `GET /api/files/{id}/download` | 구현 | 소유자 또는 `ADMIN` |
 | `DELETE /api/files/{id}` | 구현 | 논리 삭제 |
 | `GET /api/admin/storage/orphans`, `POST /api/admin/storage/orphans/cleanup` | 구현 | `ADMIN`만 |

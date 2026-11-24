@@ -41,8 +41,39 @@ public class FileService {
         this.fileMetadataCache = fileMetadataCache;
     }
 
-    public List<FileMetadata> listMine(Actor actor) {
-        return fileMetadataRepository.findVisibleByOwnerId(actor.userId());
+    public static final int DEFAULT_PAGE_SIZE = 20;
+    public static final int MAX_PAGE_SIZE = 100;
+
+    /**
+     * 본인 파일을 최신순으로 한 페이지 돌려준다(PERF-02). {@code cursor}는 이전 응답의 {@code nextCursor}다.
+     * {@code size}가 1~{@value #MAX_PAGE_SIZE} 밖이거나 cursor가 양의 정수가 아니면 VALIDATION_ERROR.
+     */
+    public FilePage listMine(Actor actor, String cursor, String size) {
+        int pageSize = size == null ? DEFAULT_PAGE_SIZE : parsePositive(size, MAX_PAGE_SIZE);
+        Long beforeId = cursor == null ? null : parsePositive(cursor, Long.MAX_VALUE);
+        // 한 개 더 읽어 다음 페이지가 있는지 판단한다(count 쿼리 없음).
+        List<FileMetadata> rows = fileMetadataRepository.findVisibleByOwnerId(actor.userId(), beforeId, pageSize + 1);
+        if (rows.size() <= pageSize) {
+            return new FilePage(rows, null);
+        }
+        List<FileMetadata> items = rows.subList(0, pageSize);
+        return new FilePage(List.copyOf(items), items.get(pageSize - 1).id());
+    }
+
+    private static int parsePositive(String raw, int max) {
+        return (int) parsePositive(raw, (long) max);
+    }
+
+    private static long parsePositive(String raw, long max) {
+        try {
+            long value = Long.parseLong(raw);
+            if (value >= 1 && value <= max) {
+                return value;
+            }
+        } catch (NumberFormatException ignored) {
+            // 아래에서 거절한다.
+        }
+        throw new BusinessException(ErrorCode.VALIDATION_ERROR);
     }
 
     public FileMetadata get(Actor actor, Long fileId) {

@@ -78,7 +78,7 @@ log("=== F4 delete right after upload; scan result must not restore it")
 d = up(T, "race.txt", b"delete race\n"); fid4 = d["fileId"]
 log("  delete immediately:", http("DELETE", f"/api/files/{fid4}", T)[0])
 time.sleep(60)
-log("  get after scan window:", info(T, fid4)[0], info(T, fid4)[3], " list contains:", any(f["fileId"] == fid4 for f in json.loads(http("GET", "/api/files", T)[1])["data"]))
+log("  get after scan window:", info(T, fid4)[0], info(T, fid4)[3], " list contains:", any(f["fileId"] == fid4 for f in json.loads(http("GET", "/api/files?size=100", T)[1])["data"]["items"]))
 tags = aws("s3api", "get-object-tagging", "--bucket", BUCKET, "--key", d["storedFileName"])["TagSet"]
 log("  object scanned anyway (tag):", {t["Key"]: t["Value"] for t in tags}.get("GuardDutyMalwareScanStatus"))
 

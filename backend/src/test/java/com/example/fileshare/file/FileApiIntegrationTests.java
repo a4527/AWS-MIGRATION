@@ -1,6 +1,7 @@
 package com.example.fileshare.file;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
@@ -59,8 +60,9 @@ class FileApiIntegrationTests {
         mockMvc.perform(get("/api/files")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data[0].fileId").value(fileId))
-                .andExpect(jsonPath("$.data[0].description").value("Day 4 report"));
+                .andExpect(jsonPath("$.data.items[0].fileId").value(fileId))
+                .andExpect(jsonPath("$.data.items[0].description").value("Day 4 report"))
+                .andExpect(jsonPath("$.data.nextCursor").value(nullValue()));
 
         mockMvc.perform(get("/api/files/{id}/download", fileId)
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))

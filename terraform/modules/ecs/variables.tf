@@ -174,6 +174,17 @@ variable "extra_environment" {
   default     = {}
 }
 
+variable "deregistration_delay_seconds" {
+  description = "Seconds the production target group drains a deregistering task (ALB default 300)."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.deregistration_delay_seconds >= 0 && var.deregistration_delay_seconds <= 3600
+    error_message = "deregistration_delay_seconds must be between 0 and 3600."
+  }
+}
+
 variable "health_check_grace_period_seconds" {
   description = "Seconds ECS ignores ALB health checks after a task starts (startup is about 60 s)."
   type        = number

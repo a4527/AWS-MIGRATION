@@ -44,11 +44,13 @@ public class InMemoryFileMetadataRepository implements FileMetadataRepository {
     }
 
     @Override
-    public List<FileMetadata> findVisibleByOwnerId(Long ownerId) {
+    public List<FileMetadata> findVisibleByOwnerId(Long ownerId, Long beforeId, int limit) {
         return filesById.values().stream()
                 .filter(file -> file.ownerId().equals(ownerId))
                 .filter(file -> file.status() != FileStatus.DELETED)
-                .sorted(Comparator.comparing(FileMetadata::createdAt).reversed())
+                .filter(file -> beforeId == null || file.id() < beforeId)
+                .sorted(Comparator.comparing(FileMetadata::id).reversed())
+                .limit(limit)
                 .toList();
     }
 

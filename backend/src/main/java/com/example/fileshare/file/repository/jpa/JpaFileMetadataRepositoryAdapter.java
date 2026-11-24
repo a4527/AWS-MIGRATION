@@ -1,5 +1,7 @@
 package com.example.fileshare.file.repository.jpa;
 
+import org.springframework.data.domain.Limit;
+
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -40,9 +42,12 @@ public class JpaFileMetadataRepositoryAdapter implements FileMetadataRepository 
     }
 
     @Override
-    public List<FileMetadata> findVisibleByOwnerId(Long ownerId) {
-        return jpaRepository.findByOwnerIdAndStatusNotOrderByCreatedAtDesc(ownerId, FileStatus.DELETED)
-                .stream()
+    public List<FileMetadata> findVisibleByOwnerId(Long ownerId, Long beforeId, int limit) {
+        List<FileMetadataEntity> rows = beforeId == null
+                ? jpaRepository.findByOwnerIdAndStatusNotOrderByIdDesc(ownerId, FileStatus.DELETED, Limit.of(limit))
+                : jpaRepository.findByOwnerIdAndStatusNotAndIdLessThanOrderByIdDesc(
+                        ownerId, FileStatus.DELETED, beforeId, Limit.of(limit));
+        return rows.stream()
                 .map(FileMetadataEntity::toDomain)
                 .toList();
     }
