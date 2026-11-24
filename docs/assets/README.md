@@ -1,26 +1,18 @@
-포트폴리오와 발표 자료에 사용하는 다이어그램을 모아 둔다.
+포트폴리오와 발표 자료에 쓰는 그림·근거 자료를 둔다.
 
-## 대표 이미지
+## 정리 페이지 (브라우저로 열기)
 
-아래 PNG는 2026-11-17 문서 재구성 이전에 만든 이미지다. 구성은 현재 코드·Terraform과 같지만 새 진행 단계의 실행 증빙은 아니다. 현재 코드 기준 그림은 `architecture-overview.html`을 쓴다.
+- `architecture-overview.html`: 애플리케이션·온프레미스 구조. Compose 구성과 실행 흐름, 도메인별 패키지·계층, 계층 의존 방향, 요청 처리(필터·JWT·컨트롤러·서비스·포트·어댑터), 프로필별 빈 선택, 업로드 흐름. 구조·책임의 기준은 [DESIGN](../DESIGN.md)이다.
+- `aws-migration.html`: AWS 이전 기록. 온프레미스→AWS 대응, AWS 구성도, 이전 단계, IaC·CI/CD, 찾아 고친 결함, 보안, 관측, 회복탄력성·부하, 비용·설계 비교(ARCH-01), 증빙. 콘솔 캡처를 WebP로 파일 안에 넣어 이 파일 하나만으로 열린다.
+- `aws-architecture.png`: `aws-migration.html`의 AWS 구성도를 PNG로 렌더링한 것. 루트 README와 포트폴리오에서 쓴다.
 
-- `portfolio-springboot-flow.png`: Spring Boot 요청 처리 흐름과 Clean Architecture 계층 구조
-- `portfolio-docker-compose.png`: Docker Compose 기반 온프레미스 전체 구조
-- `portfolio-aws-architecture.png`: Terraform 기준 AWS 아키텍처 단순화 다이어그램
-
-## 보조 SVG
-
-아래 SVG는 문서 보조용으로 유지한다.
-
-- `onprem-architecture.svg`: Docker Compose 기반 온프레미스 구조 요약
-- `aws-architecture.svg`: AWS 목표 구조 요약
-- `file-upload-flow.svg`: 업로드, Aurora metadata, S3 object, Lambda 후처리 흐름
-- `operations-validation.svg`: 최종 운영 검증 기준 요약
-
-## 아키텍처 레퍼런스 페이지
-
-- `architecture-overview.html`: 온프레미스·AWS 구성도, 패키지·계층 구조, 계층 의존성, 프로필 조합, 업로드 흐름, Terraform 모듈 의존성, CI/CD를 한 페이지로 정리한 브라우저용 문서. 2026-11-17 작업 트리 기준 요약이며 구조·책임 기준은 [DESIGN](../DESIGN.md)을 따른다.
+두 페이지는 claude.ai 아티팩트(「File Share API 아키텍처」, 「File Share AWS 이전 기록」)로도 게시했다. 2026-11-24에 내용이 오래된 SVG 4개와 PNG 3개(`portfolio-*.png`, `*-architecture.svg` 등)를 지우고 두 페이지로 합쳤다.
 
 ## 콘솔 캡처
 
-실제 리소스 화면은 `captures/`에 둔다. 캡처 ID·파일명·콘솔 위치·시점·상태는 [포트폴리오 화면 캡처 목록](../PORTFOLIO.md#화면-캡처-목록)에서 관리하고, 본문 이미지 자리가 그 파일명을 가리킨다. 부하 시험 원본 데이터(CSV·k6 요약)는 `perf-01/`에 둔다.
+실제 리소스 화면은 `captures/`에 둔다. 캡처 ID·파일명·콘솔 위치·시점·상태는 [포트폴리오 화면 캡처 목록](../PORTFOLIO.md#화면-캡처-목록)에서 관리한다. `aws-migration.html`의 내장 이미지는 이 원본에서 만든다.
+
+## 측정 원본
+
+- `perf-01/`: PERF-01 부하 시험 원본(분 단위 지표 CSV, 타임라인 CSV, k6 로그).
+- `arch-01/`: ARCH-01·PERF-02 전후 측정(NAT·ALB 분 단위 지표, 변경 후 k6 요약, S3 경로·task 중지 측정 로그).
