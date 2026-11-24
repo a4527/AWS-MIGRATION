@@ -1,4 +1,4 @@
-기준일: 2026-11-23 (Asia/Seoul).
+기준일: 2026-11-24 (Asia/Seoul).
 
 ## 현재 단계
 
@@ -24,17 +24,19 @@
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
 | AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
 | 개인 계정 백업(BACKUP-01) | S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. 복원은 OPS-02 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
+| 부하·확장(PERF-01) | 40 VU 같은 조건: 기준선(task 1) 59.4 rps·오류 0, Auto Scaling 1~4 72.9 rps·오류 0. 확장 후 축소 안 됨 → 메모리 정책 축소 끔(DEC-023) → 3 → 1 확인. Auto Scaling 3 task 상태에서 plan 변경 없음(IAC-02). task 중지 재실행: 중단 약 6분 44초, `no-healthy-target` 발화 확인 | [작업일지](worklogs/2026-11-24.md) |
 | GitHub Actions | actionlint, 로컬 Trivy(2026-11-23 Spring Boot 4 전환 후 예외 없이 0건), 테스트 67개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
 
-1. 다음 실습: PERF-01 기준선·확장 비교(시작 전 복제 멈춤, 끝나면 시험 데이터 정리) → 화면 캡처([목록](PORTFOLIO.md#화면-캡처-목록)).
+1. ARCH-01 비용·설계 비교. PERF-01에서 나온 개선 후보(목록 API 페이지 처리, 운영 target group deregistration delay 300초 단축)를 함께 검토한다.
 2. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-24: 실습. PERF-01 기준선·확장 비교 완료, 메모리 정책이 축소를 막는 결함을 찾아 고쳤다(DEC-023). IAC-02 완료. 포트폴리오 캡처 구조(C01~C26)를 만들고 28장을 모두 반영했다. task 중지 재실행에서 중단이 6분 44초로 길어진 것을 기록했다(원인 미확인). 시험 데이터 7,183건 정리 후 실습 계층 destroy.
 - 2026-11-23: 실습. SEC-02(Boot 4 이미지 production 배포), IAC-03(drift 주입 → 탐지 47초 → 승인 apply 복구), CICD-03 drill B(production 런타임 실패 → smoke 감지 → 자동 롤백 3분 13초)를 마쳤다.
 - 2026-11-23: BACKUP-01. 부트캠프 file bucket을 개인 계정 bucket으로 복제하고(삭제 미복제), 실습 종료 전 `scripts/db-backup.sh`로 DB dump를 같은 경로로 보낸다(DEC-022). 부하 시험 데이터(파일 1,675개, 260MB)를 정리했다. Aurora가 11-20 밤 외부 요인으로 정지돼 있던 것을 발견해 다시 시작했다.
 - 2026-11-23: SEC-03. Aurora SG·route table을 Terraform CI 밖에서 바꾸면 CloudTrail → EventBridge → SNS로 1분 안에 알린다(DEC-021). 유지 계층에 trail을 추가했다.

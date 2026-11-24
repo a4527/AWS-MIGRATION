@@ -335,6 +335,10 @@ resource "aws_appautoscaling_policy" "memory" {
       predefined_metric_type = "ECSServiceAverageMemoryUtilization"
     }
 
+    # The JVM keeps its heap after load, so memory stays high and this policy
+    # would block every scale-in (PERF-01, 2026-11-24). Memory may still scale
+    # out; scale-in is decided by the CPU policy alone.
+    disable_scale_in   = true
     scale_in_cooldown  = 300
     scale_out_cooldown = 60
     target_value       = var.memory_target_value

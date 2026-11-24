@@ -232,3 +232,17 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 - 원인: Aurora 클러스터가 일시정지(0 ACU)가 아니라 **정지**(`stopped`) 상태였다. 일시정지는 첫 연결에서 약 15초 만에 깨어나지만, 정지된 클러스터는 연결로 깨어나지 않는다. 2026-11-23 확인한 이벤트: 11-20 08:57Z 실습 종료 후 일시정지 → 17:18Z 백그라운드 작업으로 재개 → 17:29Z `DB cluster stopped`. 우리 작업일지에 정지 기록이 없어 공유 계정 정리 정책으로 추정한다(미확인). backend service도 같은 이유로 task가 뜨지 못한다.
 - 해결 방법: `aws rds describe-db-instances`로 상태가 `stopped`인지 보고 `aws rds start-db-cluster --db-cluster-identifier fileshare-dev-aurora`로 시작한다. `available`까지 약 5분 걸렸다. 정지된 클러스터는 7일 뒤 AWS가 자동으로 다시 시작한다.
 - 재검증 방법·결과: 2026-11-23 05:42:50Z 시작 → 05:48:13Z `available`, 이후 `psql` task와 `pg_dump` task 성공.
+
+## Auto Scaling이 확장 뒤 축소하지 않음
+
+- 증상: 부하가 끝나 CPU가 1%인데 ECS task가 늘어난 수(3)에서 줄지 않는다. CPU·메모리 `TargetTracking-...-AlarmLow`가 둘 다 `ALARM`인데 스케일링 활동이 없다.
+- 원인: 메모리 평균이 47%로 평평했다. JVM은 부하 뒤에도 힙을 돌려주지 않는다. target tracking은 줄였을 때 목표를 넘을 것으로 계산되면 축소하지 않고(3 × 47 / 2 ≈ 70.5% > 70%), 정책이 여러 개면 모두 동의해야 축소한다. 메모리 정책이 축소를 막았다.
+- 해결 방법: 메모리 정책에 `disable_scale_in = true`(확장 전용). 축소는 CPU 정책만 판단한다([DEC-023](DECISIONS.md#결정-목록), `terraform/modules/ecs/main.tf`).
+- 재검증 방법·결과: 2026-11-24 46분 동안 3 task 유지 → 02:44:23Z apply → 7초 뒤 3 → 2, 6분 뒤 2 → 1([작업일지](worklogs/2026-11-24.md#축소가-막힌-결함과-수정)).
+
+## task를 중지하면 새 task가 5분 뒤에야 뜸
+
+- 증상: 운영 서비스(desired 1)의 task를 `StopTask`로 멈추자 `deregistered`·`draining` 이벤트 뒤 5분 넘게 새 task가 없고 ALB가 503을 낸다. 2026-11-24 중단 약 6분 44초.
+- 원인(관찰): 새 task는 운영 target group의 deregistration delay 300초가 끝난 직후(02:56:37Z) 시작했다. 2026-11-20 같은 시험에서는 87초 만에 복구돼, 무엇이 달라졌는지는 확인하지 못했다(미확인).
+- 해결 방법(후보, 미적용): 운영 target group deregistration delay를 30~60초로 줄이고, 운영 최소 task를 2로 둔다(예시 tfvars). 배포 시간(운영 4분 33초)도 함께 줄어든다.
+- 재검증 방법: 같은 `StopTask` 시험으로 중단 시간을 다시 잰다.

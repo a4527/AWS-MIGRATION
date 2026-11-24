@@ -769,3 +769,7 @@ V-AWS-05(Lambda 실패)와 V-AWS-04(task 중지)를 실행한다.
 ### V-PERF-03 부하·확장
 
 ECS 일회성 task(k6)로 AWS 안에서 부하를 준다: 0→40 VU 2분, 40 VU 6분, 감소 1분, 요청 비율 단건 70%·목록 20%·100KB 업로드 10%. 같은 조건을 (a) task 1개 고정(scalable target max 1), (b) Auto Scaling 1~4로 두 번 실행한다. 판정: 처리량·오류율·p50/p95, task 수 변화와 확장·축소 시각, CPU를 기록하고 (a)와 비교한다. 축소는 부하 종료 뒤 15분 이상 걸린다.
+
+실행: `python3 -I scripts/drills/perf01_load.py <out> baseline|scaling <owner-tag>`. 시작 전 `dev-data`에 `backup_replication_paused = true`, 끝나면 `perf-*` 사용자의 행·객체 버전을 지우고 되돌린다([개인 계정 백업](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)).
+
+결과(2026-11-24): (a) 59.4 rps·오류 0·읽기 p95 1.78초, (b) 72.9 rps·오류 0·읽기 p95 1.78초, task 1 → 2 → 3. 확장 뒤 메모리 정책이 축소를 막아 고쳤다(DEC-023). 한계: 목록 API에 페이지 처리가 없어 시험 중 쌓이는 파일만큼 목록 응답이 무거워진다. 원본은 [perf-01](../assets/perf-01/), 해석은 [작업일지](../worklogs/2026-11-24.md#perf-01-부하확장-v-perf-03).

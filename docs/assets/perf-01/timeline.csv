@@ -1,0 +1,30 @@
+time_kst,source,kind,detail
+2026-11-24T09:41:19,ecs-event,,(service fileshare-dev-backend) has started 1 tasks: (task 9e6f5f3b60504bd681ad48de869232d5).
+2026-11-24T09:41:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from INSUFFICIENT_DATA to OK
+2026-11-24T09:41:48,ecs-event,,(service fileshare-dev-backend) registered 1 targets in (target-group <arn>)
+2026-11-24T09:41:57,alarm,fileshare-dev-backend-memory-high,Alarm updated from INSUFFICIENT_DATA to OK
+2026-11-24T09:43:30,ecs-event,,(service fileshare-dev-backend) (deployment ecs-svc/4054310194372945307) deployment completed.
+2026-11-24T09:43:30,ecs-event,,(service fileshare-dev-backend) has reached a steady state.
+2026-11-24T09:44:30,alarm,tt-high-CPUUtilization,Alarm updated from INSUFFICIENT_DATA to OK
+2026-11-24T09:44:43,alarm,tt-high-MemoryUtilization,Alarm updated from INSUFFICIENT_DATA to OK
+2026-11-24T09:45:30,alarm,tt-low-CPUUtilization,Alarm updated from INSUFFICIENT_DATA to OK
+2026-11-24T09:50:30,alarm,tt-high-CPUUtilization,Alarm updated from OK to ALARM
+2026-11-24T09:54:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from OK to ALARM
+2026-11-24T09:55:30,scaling,Successful,Setting desired count to 2. (end 2026-11-24T09:56:35)
+2026-11-24T09:55:38,ecs-event,,(service fileshare-dev-backend) has started 1 tasks: (task 0dc9d0734196406799cb7ef950e004b1).
+2026-11-24T09:56:06,ecs-event,,(service fileshare-dev-backend) registered 1 targets in (target-group <arn>)
+2026-11-24T09:56:30,alarm,tt-high-CPUUtilization,Alarm updated from ALARM to OK
+2026-11-24T09:58:09,ecs-event,,(service fileshare-dev-backend) has reached a steady state.
+2026-11-24T09:58:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from ALARM to OK
+2026-11-24T09:58:55,alarm,tt-low-MemoryUtilization,Alarm updated from INSUFFICIENT_DATA to ALARM
+2026-11-24T10:02:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from OK to ALARM
+2026-11-24T10:03:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from ALARM to OK
+2026-11-24T10:04:30,alarm,tt-high-CPUUtilization,Alarm updated from OK to ALARM
+2026-11-24T10:04:30,scaling,Successful,Setting desired count to 3. (end 2026-11-24T10:05:33)
+2026-11-24T10:04:37,ecs-event,,(service fileshare-dev-backend) has started 1 tasks: (task fd3f29ea2af845df8c478293e0c62866).
+2026-11-24T10:05:06,ecs-event,,(service fileshare-dev-backend) registered 1 targets in (target-group <arn>)
+2026-11-24T10:07:13,ecs-event,,(service fileshare-dev-backend) has reached a steady state.
+2026-11-24T10:07:30,alarm,tt-high-CPUUtilization,Alarm updated from ALARM to OK
+2026-11-24T10:07:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from OK to ALARM
+2026-11-24T10:08:42,alarm,fileshare-dev-backend-cpu-high,Alarm updated from ALARM to OK
+2026-11-24T10:21:30,alarm,tt-low-CPUUtilization,Alarm updated from OK to ALARM

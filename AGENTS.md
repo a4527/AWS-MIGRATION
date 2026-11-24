@@ -12,7 +12,7 @@
 | 어떻게 이전·배포·검증하는가 | [MIGRATION](docs/design/MIGRATION.md), [DEPLOYMENT](docs/design/DEPLOYMENT.md), [VALIDATION](docs/design/VALIDATION.md) |
 | AWS 리소스의 구체적인 구성과 한계는 무엇인가 | [AWS](docs/design/AWS.md) |
 | 무엇을 왜 결정했고 무엇이 유효한가 | [DECISIONS](docs/DECISIONS.md) |
-| 그날 무엇을 어떤 조건에서 확인했는가 | [현재 작업일지](docs/worklogs/2026-11-23.md), [이전 작업일지](docs/worklogs/2026-11-20.md), [기존 Day 이력](docs/worklogs/LEGACY.md) |
+| 그날 무엇을 어떤 조건에서 확인했는가 | [현재 작업일지](docs/worklogs/2026-11-24.md), [이전 작업일지](docs/worklogs/2026-11-23.md), [기존 Day 이력](docs/worklogs/LEGACY.md) |
 | 문제를 어떻게 진단·해결·재검증하는가 | [TROUBLESHOOTING](docs/TROUBLESHOOTING.md) |
 | 사용자에게 의미 있게 바뀐 것은 무엇인가 | [CHANGELOG](docs/CHANGELOG.md) |
 | 어떻게 설치·실행하는가 | [README](README.md), [backend](backend/README.md), [terraform](terraform/README.md) |
