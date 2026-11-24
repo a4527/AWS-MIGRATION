@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>File Share AWS 이전 기록</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,7 +13,7 @@
   --good:#1f7a3d; --good-soft:#dcf1e2; --warn:#8a5a00; --warn-soft:#f7ebcf; --bad:#a8322b; --bad-soft:#f6dedb;
   --vpc:#3c8a2e; --az:#3f7fc4; --pub:#e8f3e4; --pri:#e6eef8; --asg:#d0650a; --arrow:#4a5964;
   --sans:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
-  --mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --mono:"IBM Plex Mono","IBM Plex Sans KR",ui-monospace,"SFMono-Regular",Menlo,monospace;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
   --bg:#0f151a; --surface:#161e25; --sunken:#1c262e; --line:#2b3842;
@@ -107,6 +109,7 @@ ol.steps li::before{counter-increment:s;content:counter(s);width:22px;height:22p
 .shot{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column;min-width:0}
 .shot .shot-open{display:block;width:100%;padding:0;border:0;background:var(--sunken);cursor:zoom-in}
 .shot-zoom{position:fixed;inset:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));cursor:zoom-out;overflow:auto}
+.shot-zoom[hidden]{display:none}
 .shot-zoom img{max-width:100%;max-height:100%;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
 .shot img{display:block;width:100%;height:auto}
 .shot figcaption{font-size:13px;line-height:1.55;padding:9px 12px;display:flex;gap:8px;align-items:baseline}
