@@ -91,7 +91,7 @@ Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 �
 | --- | --- | --- |
 | 유지(`dev-data`) | VPC·subnet, S3 file bucket, Aurora, SSM DB 비밀번호, ECR, GitHub OIDC·배포/CI role, 알람 SNS, CloudTrail·변경 알림, 예산 | 계속 유지(쉬는 동안 몇 센트) |
 | 실습(`dev`) | NAT, S3 gateway endpoint, ALB, ECS·Auto Scaling, ElastiCache, Lambda, GuardDuty 검사 계획·SQS, 대시보드·알람 | 실습마다 apply(약 6분) → destroy |
-| 개인 계정(`backup`) | 백업 bucket·policy | 2026-11-24 철거(DEC-025). 복제 규칙·role 삭제 완료, bucket·IAM은 콘솔 삭제 대기 |
+| 개인 계정(`backup`) | 백업 bucket·policy | 2026-11-24 철거(DEC-025). 복제 규칙·role·bucket 삭제 완료. 개인 계정 IAM user·role은 비용이 없어 남겨 둠(사용자 결정) |
 
 ## 4. 기술 스택과 선택 이유
 
@@ -171,8 +171,7 @@ terraform/
 ├── bootstrap/            state bucket (로컬 state, 최초 1회)
 ├── environments/
 │   ├── dev-data/         유지 계층 (원격 state, CI는 plan·drift만, 적용은 로컬)
-│   ├── dev/              실습 계층 (원격 state, CI가 승인 후 apply)
-│   └── backup/           개인 계정 백업 bucket (2026-11-24 철거 중, DEC-025)
+│   └── dev/              실습 계층 (원격 state, CI가 승인 후 apply)
 └── modules/              aurora, change-alerts, ecr, ecs, elasticache, file-processor,
                           github-actions, iam, nat, s3, security-groups, terraform-ci, vpc
 ```
@@ -271,7 +270,7 @@ main push / 수동 실행
 | 네트워크 경계 | ALB만 public. ECS는 private, Aurora·Redis는 인터넷 경로 없는 database subnet | [AWS](design/AWS.md#security-group-설계) |
 | 보안 그룹 | ALB ← 80/443, app ← ALB 8080, Aurora ← app 5432, Redis ← app 6379만 | 규칙은 SG 참조(ID), CIDR 개방 없음 |
 | 최소 권한 IAM | 앱·Lambda·GuardDuty는 `files/*`만(백업 철거 전에는 dump task `backups/db/*` 쓰기만, 복제 role 원본 읽기·대상 복제만) | 신뢰 정책에 `aws:SourceAccount`·`aws:SourceArn`(혼동된 대리인 방지) |
-| 자격 증명 | 사람: `aws login` 단기 세션(개인 계정은 MFA role, 2026-11-24 철거 중). CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
+| 자격 증명 | 사람: `aws login` 단기 세션(개인 계정 MFA role은 백업 철거로 2026-11-24부터 미사용). CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
 | CI 권한 분리 | plan role(읽기 전용, 사용자 파일·비밀값 거부) / apply role(승인 environment만, 자기 자신 수정 불가) / 배포 role(ECR·ECS 한정) | fork PR에는 OIDC 토큰 없음 |
 | 비밀값 | DB 비밀번호·JWT secret을 Terraform이 생성해 SSM SecureString에 write-only로 기록, ECS `secrets`로 주입 | task definition 환경변수에 비밀값 0개, state·plan에 평문 없음 |
 | 암호화 | S3 SSE-S3, Aurora 저장 암호화, Redis 전송·저장 암호화, state bucket TLS 강제 | CMK 미사용은 Trivy 예외에 사유·만료일 |

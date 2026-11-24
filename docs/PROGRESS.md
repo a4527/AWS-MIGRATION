@@ -23,15 +23,14 @@
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
 | AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
-| 개인 계정 백업(BACKUP-01) | 2026-11-23 검증: S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. **2026-11-24 철거**(DEC-025): 복제 규칙·role 삭제 완료, 개인 계정 bucket·IAM은 사용자 콘솔 삭제 대기 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
+| 개인 계정 백업(BACKUP-01) | 2026-11-23 검증: S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. **2026-11-24 철거**(DEC-025): 복제 규칙·role·개인 계정 bucket 삭제, `terraform/environments/backup` 제거 완료. 개인 계정 IAM user·role은 남겨 둠 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
 | 부하·확장(PERF-01) | 40 VU 같은 조건: 기준선(task 1) 59.4 rps·오류 0, Auto Scaling 1~4 72.9 rps·오류 0. 확장 후 축소 안 됨 → 메모리 정책 축소 끔(DEC-023) → 3 → 1 확인. Auto Scaling 3 task 상태에서 plan 변경 없음(IAC-02). task 중지 재실행: 중단 약 6분 44초, `no-healthy-target` 발화 확인 | [작업일지](worklogs/2026-11-24.md) |
 | 설계 비교·개선(ARCH-01, PERF-02) | 같은 40 VU 조건 처리량 59.4 → 206.9 rps, 조회 p95 1,783 → 121ms(페이지 처리). task 중지 중단 404 → 92초(delay 30초, rolling 배포 시간은 줄지 않음). S3 210MB 중 NAT 0.6MB, 업로드 바이트당 NAT 송신 2.25 → 1.12배(endpoint). k6 시험 트래픽의 NAT 왕복 발견 | [작업일지](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정), [설계 비교](proposals/ARCH-COMPARISON.md) |
 | GitHub Actions | actionlint, Trivy 0건, 테스트 69개 통과. GitHub 실제 실행: PR 검사, main 자동 배포(staging·smoke·승인 후 production), 롤백 drill(11-23), Terraform PR plan·승인 apply·drift 탐지 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
 
-1. 개인 계정 bucket·IAM role·user 콘솔 삭제(사용자) → `terraform/environments/backup` 제거.
-2. 프로젝트 종료 시 Terraform 밖 리소스(Container Insights 로그 그룹 등) 정리.
+1. 프로젝트 종료 시 Terraform 밖 리소스(Container Insights 로그 그룹 등) 정리.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
