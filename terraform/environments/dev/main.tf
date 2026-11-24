@@ -139,6 +139,7 @@ module "ecs" {
   memory_target_value             = var.ecs_memory_target_value
   log_retention_in_days           = var.cloudwatch_log_retention_in_days
   health_check_path               = var.ecs_health_check_path
+  deregistration_delay_seconds    = var.ecs_deregistration_delay_seconds
   certificate_arn                 = local.https_enabled ? aws_acm_certificate_validation.application[0].certificate_arn : null
   ssl_policy                      = var.alb_ssl_policy
   aws_region                      = var.aws_region

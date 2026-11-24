@@ -118,7 +118,7 @@ class FileUploadServiceTests {
         assertThat(second.replayed()).isTrue();
         assertThat(second.metadata().id()).isEqualTo(first.metadata().id());
         assertThat(storage.list()).hasSize(1);
-        assertThat(files.findVisibleByOwnerId(OWNER.userId())).hasSize(1);
+        assertThat(files.findVisibleByOwnerId(OWNER.userId(), null, 10)).hasSize(1);
     }
 
     @Test

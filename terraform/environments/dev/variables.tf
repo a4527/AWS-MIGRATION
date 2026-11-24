@@ -91,6 +91,18 @@ variable "ecs_health_check_path" {
   default     = "/api/health"
 }
 
+variable "ecs_deregistration_delay_seconds" {
+  description = "Production target group deregistration delay (ARCH-01; ALB default 300)."
+  type        = number
+  default     = 30
+}
+
+variable "s3_gateway_endpoint_enabled" {
+  description = "Route S3 traffic from private subnets through a free gateway endpoint instead of the NAT gateway (ARCH-01)."
+  type        = bool
+  default     = true
+}
+
 variable "domain_name" {
   description = "Application DNS name, for example api.example.com. Leave empty to disable Route53 and HTTPS."
   type        = string
@@ -179,27 +191,4 @@ variable "ecs_staging_enabled" {
   description = "Create the staging ECS service used by CD before promotion (CICD-02, DEC-017)."
   type        = bool
   default     = true
-}
-
-variable "db_backup_object_prefix" {
-  description = "File bucket prefix for pg_dump files (BACKUP-01). Must stay outside files/ so the app, Lambda and GuardDuty ignore it."
-  type        = string
-  default     = "backups/db/"
-
-  validation {
-    condition     = endswith(var.db_backup_object_prefix, "/") && !startswith(var.db_backup_object_prefix, "files/")
-    error_message = "db_backup_object_prefix must end with / and must not be under files/."
-  }
-}
-
-variable "db_backup_postgres_image" {
-  description = "pg_dump image. Its major version must be at least the Aurora major (16)."
-  type        = string
-  default     = "public.ecr.aws/docker/library/postgres:16.16-alpine"
-}
-
-variable "db_backup_aws_cli_image" {
-  description = "AWS CLI image that uploads the dump."
-  type        = string
-  default     = "public.ecr.aws/aws-cli/aws-cli:2.42.0"
 }

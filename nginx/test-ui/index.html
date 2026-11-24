@@ -291,9 +291,10 @@
 
   async function listFiles() {
     if (!token) return;
-    const r = await call('GET', '/api/files');
+    // 최신 100개만 보여 준다(PERF-02 커서 페이지 처리, 최대 size 100).
+    const r = await call('GET', '/api/files?size=100');
     const rows = $('fileRows'); rows.innerHTML = '';
-    const list = Array.isArray(r.data?.data) ? r.data.data : [];
+    const list = Array.isArray(r.data?.data?.items) ? r.data.data.items : [];
     if (!list.length) { rows.innerHTML = '<tr><td colspan="6" class="muted">파일 없음</td></tr>'; return; }
     for (const f of list) {
       const tr = document.createElement('tr');

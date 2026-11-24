@@ -39,7 +39,3 @@ tags = {}
 # IAC-03: state bucket from terraform/bootstrap output state_bucket_name.
 terraform_state_bucket_name = "replace-with-terraform-state-bucket"
 
-# BACKUP-01 (ADR-002): personal account backup bucket from ../backup.
-# Leave both empty to disable replication.
-backup_account_id  = ""
-backup_bucket_name = ""

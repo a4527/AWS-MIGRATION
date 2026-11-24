@@ -94,8 +94,8 @@ final class TestFixtures {
         }
 
         @Override
-        public List<FileMetadata> findVisibleByOwnerId(Long ownerId) {
-            return delegate.findVisibleByOwnerId(ownerId);
+        public List<FileMetadata> findVisibleByOwnerId(Long ownerId, Long beforeId, int limit) {
+            return delegate.findVisibleByOwnerId(ownerId, beforeId, limit);
         }
 
         @Override

@@ -100,7 +100,7 @@ UPLOAD=$(api "$TOKEN" -X POST "$BASE_URL/api/files" -F "file=@sample-$RUN_ID.txt
 echo "$UPLOAD" | jq
 FILE_ID=$(echo "$UPLOAD" | jq -r '.data.fileId')
 
-api "$TOKEN" "$BASE_URL/api/files" | jq '.data | length'
+api "$TOKEN" "$BASE_URL/api/files" | jq '.data.items | length'
 api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq '.data | {fileId,status,scanStatus,storedFileName}'
 api "$TOKEN" "$BASE_URL/api/files/$FILE_ID/download" -o "down-$RUN_ID.txt"
 sha256sum "sample-$RUN_ID.txt" "down-$RUN_ID.txt"
@@ -131,7 +131,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" -X PO
 api "$TOKEN" -X DELETE "$BASE_URL/api/files/$FILE_ID" | jq '.data'
 api "$TOKEN" "$BASE_URL/api/files/$FILE_ID" | jq '.errorCode'
 curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" "$BASE_URL/api/files/$FILE_ID/download"
-api "$TOKEN" "$BASE_URL/api/files" | jq "[.data[] | select(.fileId==$FILE_ID)] | length"
+api "$TOKEN" "$BASE_URL/api/files?size=100" | jq "[.data.items[] | select(.fileId==$FILE_ID)] | length"
 ```
 
 판정: 삭제 응답 `status`가 `deleted`, 이후 조회 `RESOURCE_NOT_FOUND`, 다운로드 `404`, 목록에서 제외.
@@ -269,7 +269,7 @@ docker compose start minio
 ```bash
 docker compose restart backend
 until curl -sf "$BASE_URL/api/health" > /dev/null; do sleep 2; done
-api "$TOKEN" "$BASE_URL/api/files" | jq '.data | length'
+api "$TOKEN" "$BASE_URL/api/files" | jq '.data.items | length'
 TOKEN=$(login "$USER_EMAIL"); echo "${TOKEN:0:20}..."
 ```
 

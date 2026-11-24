@@ -16,7 +16,11 @@ public interface FileMetadataRepository {
 
     Optional<FileMetadata> findById(Long id);
 
-    List<FileMetadata> findVisibleByOwnerId(Long ownerId);
+    /**
+     * 삭제되지 않은 본인 파일을 최신순(id 내림차순)으로 최대 {@code limit}개 돌려준다.
+     * {@code beforeId}가 있으면 그보다 작은 id만 본다(커서 페이지 처리, PERF-02).
+     */
+    List<FileMetadata> findVisibleByOwnerId(Long ownerId, Long beforeId, int limit);
 
     /** 논리 삭제된 행을 포함해 저장 위치로 메타데이터를 찾는다. 업로드 결과 확인과 정합성 점검에 쓴다. */
     Optional<FileMetadata> findByStoragePath(String storagePath);

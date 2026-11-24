@@ -1,5 +1,6 @@
 package com.example.fileshare.file.repository.jpa;
 
+import org.springframework.data.domain.Limit;
 import org.springframework.data.repository.query.Param;
 
 import org.springframework.data.jpa.repository.Query;
@@ -17,7 +18,10 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface SpringDataFileMetadataJpaRepository extends JpaRepository<FileMetadataEntity, Long> {
 
-    List<FileMetadataEntity> findByOwnerIdAndStatusNotOrderByCreatedAtDesc(Long ownerId, FileStatus status);
+    List<FileMetadataEntity> findByOwnerIdAndStatusNotOrderByIdDesc(Long ownerId, FileStatus status, Limit limit);
+
+    List<FileMetadataEntity> findByOwnerIdAndStatusNotAndIdLessThanOrderByIdDesc(
+            Long ownerId, FileStatus status, Long beforeId, Limit limit);
 
     Optional<FileMetadataEntity> findFirstByStoragePath(String storagePath);
 
