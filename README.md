@@ -2,7 +2,7 @@
 
 Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 운영 기준선을 만든 뒤, 같은 API·데이터 계약을 유지한 채 Terraform으로 구성한 AWS로 옮기는 프로젝트입니다.
 
-코드(애플리케이션·Compose·Terraform·CI/CD)는 준비되어 있고, 2026-11-17부터 문서를 현재 코드 기준으로 재정비해 **온프레미스 구축 → 컨테이너 실행·검증 → AWS 마이그레이션** 순서로 다시 진행합니다. 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
+온프레미스 기준선, AWS 배포·계약 비교, 장애 주입·복원·배포 롤백·drift·계정 밖 백업 검증까지 마쳤습니다(2026-11-23). 남은 것은 부하·확장 실험(PERF-01)과 비용·설계 비교(ARCH-01)입니다. 성과 요약은 [포트폴리오](docs/PORTFOLIO.md), 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
 
 ![AWS Architecture](docs/assets/portfolio-aws-architecture.png)
 
@@ -15,8 +15,9 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 | DB | PostgreSQL 16 | Aurora PostgreSQL |
 | 캐시 | Redis 7 | ElastiCache Redis |
 | 파일 | MinIO | S3 (`files/` 접두어) |
-| 후처리 | 없음 | S3 이벤트 → Lambda |
-| 배포 | `docker compose up` | GitHub Actions(OIDC) → ECR → ECS |
+| 후처리·검사 | 없음(`NOT_SCANNED`) | S3 이벤트 → Lambda(확장자 가드), GuardDuty 악성코드 검사 → EventBridge → SQS |
+| 배포 | `docker compose up` | GitHub Actions(OIDC) → ECR → staging smoke → 승인 → production(실패 시 자동 롤백) |
+| 관측·백업 | 로그 | CloudWatch 대시보드·SLI·알람(SNS), 개인 계정 교차 계정 백업 |
 
 구조와 흐름은 [DESIGN](docs/DESIGN.md)과 [아키텍처 페이지](docs/assets/architecture-overview.html)에 있습니다.
 
@@ -28,6 +29,7 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 - 업로드 실패 시 객체 보상 삭제, 관리자용 고아 객체 점검 API
 - Redis 메타데이터 캐시(장애 시 DB 우회, 버전 비교 쓰기)
 - MinIO·S3 교체 가능한 저장소 계층, S3 이벤트 기반 Lambda 후처리
+- 악성코드 검사(AWS): 검사 전 409, 감염·실패 403으로 다운로드 차단
 
 ## 빠른 시작 (온프레미스)
 
