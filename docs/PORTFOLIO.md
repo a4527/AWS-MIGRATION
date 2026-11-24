@@ -91,7 +91,7 @@ Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 �
 | --- | --- | --- |
 | 유지(`dev-data`) | VPC·subnet, S3 file bucket, Aurora, SSM DB 비밀번호, ECR, GitHub OIDC·배포/CI role, 알람 SNS, CloudTrail·변경 알림, 예산 | 계속 유지(쉬는 동안 몇 센트) |
 | 실습(`dev`) | NAT, S3 gateway endpoint, ALB, ECS·Auto Scaling, ElastiCache, Lambda, GuardDuty 검사 계획·SQS, 대시보드·알람 | 실습마다 apply(약 6분) → destroy |
-| 개인 계정(`backup`) | 백업 bucket·policy | 2026-11-24 철거(DEC-025). 복제 규칙·role 삭제 완료, bucket·IAM은 콘솔 삭제 대기 |
+| 개인 계정(`backup`) | 백업 bucket·policy | 2026-11-24 철거(DEC-025). 복제 규칙·role·bucket 삭제 완료. 개인 계정 IAM user·role은 비용이 없어 남겨 둠(사용자 결정) |
 
 ## 4. 기술 스택과 선택 이유
 
@@ -171,8 +171,7 @@ terraform/
 ├── bootstrap/            state bucket (로컬 state, 최초 1회)
 ├── environments/
 │   ├── dev-data/         유지 계층 (원격 state, CI는 plan·drift만, 적용은 로컬)
-│   ├── dev/              실습 계층 (원격 state, CI가 승인 후 apply)
-│   └── backup/           개인 계정 백업 bucket (2026-11-24 철거 중, DEC-025)
+│   └── dev/              실습 계층 (원격 state, CI가 승인 후 apply)
 └── modules/              aurora, change-alerts, ecr, ecs, elasticache, file-processor,
                           github-actions, iam, nat, s3, security-groups, terraform-ci, vpc
 ```
@@ -271,7 +270,7 @@ main push / 수동 실행
 | 네트워크 경계 | ALB만 public. ECS는 private, Aurora·Redis는 인터넷 경로 없는 database subnet | [AWS](design/AWS.md#security-group-설계) |
 | 보안 그룹 | ALB ← 80/443, app ← ALB 8080, Aurora ← app 5432, Redis ← app 6379만 | 규칙은 SG 참조(ID), CIDR 개방 없음 |
 | 최소 권한 IAM | 앱·Lambda·GuardDuty는 `files/*`만(백업 철거 전에는 dump task `backups/db/*` 쓰기만, 복제 role 원본 읽기·대상 복제만) | 신뢰 정책에 `aws:SourceAccount`·`aws:SourceArn`(혼동된 대리인 방지) |
-| 자격 증명 | 사람: `aws login` 단기 세션(개인 계정은 MFA role, 2026-11-24 철거 중). CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
+| 자격 증명 | 사람: `aws login` 단기 세션(개인 계정 MFA role은 백업 철거로 2026-11-24부터 미사용). CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
 | CI 권한 분리 | plan role(읽기 전용, 사용자 파일·비밀값 거부) / apply role(승인 environment만, 자기 자신 수정 불가) / 배포 role(ECR·ECS 한정) | fork PR에는 OIDC 토큰 없음 |
 | 비밀값 | DB 비밀번호·JWT secret을 Terraform이 생성해 SSM SecureString에 write-only로 기록, ECS `secrets`로 주입 | task definition 환경변수에 비밀값 0개, state·plan에 평문 없음 |
 | 암호화 | S3 SSE-S3, Aurora 저장 암호화, Redis 전송·저장 암호화, state bucket TLS 강제 | CMK 미사용은 Trivy 예외에 사유·만료일 |
@@ -489,7 +488,7 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | 실습 계층이 떠 있을 때 | 시간당 약 $0.2~0.3 (NAT 약 $0.045 + ALB 약 $0.023 + Fargate 2 task 약 $0.05 + Redis 약 $0.016 + Aurora 활성 ACU) |
 | 쉬는 동안 | 월 $1 미만(S3·Aurora 스토리지, ECR 이미지, 알람 SNS) |
 
-**한계**: 예산이 Owner 태그로 필터되는데, 2026-11-23 Cost Explorer에서 Owner 태그 비용이 0으로 나왔다. Owner가 비용 할당 태그로 활성화되지 않은 것으로 보이며 조직 관리자 확인이 필요하다. 그래서 위 금액은 실제 청구가 아니라 추정이다.
+**한계**: 예산이 Owner 태그로 필터되는데, 2026-11-23 Cost Explorer에서 Owner 태그 비용이 0으로 나왔다. Owner가 비용 할당 태그로 활성화되지 않은 것으로 보인다. 조직 관리자 확인은 하지 않고 닫았으므로(**미실행**, 2026-11-24) 위 금액은 실제 청구가 아니라 정가 추정이다.
 
 ### 설계 비교 (ARCH-01, us-east-1 정가, 산정일 2026-11-24)
 
@@ -554,7 +553,9 @@ AWS Pricing API로 조회한 정가 기준 추정이다. 가정: AZ 2개, 상시
 | 배포 속도 | 운영 rollout 190~255초. delay 단축으로는 줄지 않음 | 새 task 정상 판정 시간(health check 간격·grace) 조정 검토 |
 | 데이터 이전 | 하지 않음(시험 데이터뿐, DEC-007) | 실제 이전이면 `pg_dump`/`pg_restore` + 객체 동기화 |
 | 계정 밖 백업 | 검증 후 철거(DEC-025) | 실제 운영이면 다시 둔다(교차 계정 복제 + 스냅샷 공유) |
-| 비용 실측 | Owner 비용 할당 태그 확인 필요 | 관리자 확인 후 Cost Explorer로 |
+| 비용 실측 | **미실행**(Owner 비용 할당 태그 확인 안 함, 정가 추정만) | 실제 운영이면 비용 할당 태그 활성화 후 Cost Explorer로 |
+| 다중 인스턴스 캐시 경합(FILE-02) | **미실행**. 단일 인스턴스 검증과 Redis 재부팅 중 DB 우회까지만 | 실제 운영이면 backend 2대에서 삭제 직후 무효화 경합 재현 |
+| S3 스트리밍 메모리 전후 비교(FILE-04) | **미실행**. 변경 후 90MB 동시 업로드에 메모리 277 → 323MB만 관찰 | 같은 조건으로 변경 전 이미지와 비교 |
 | Kubernetes | 보류(K8S-01) | 목표 직무 필요 시 EKS 비교 |
 
 ## 16. 발표 흐름 제안 (20분 기준)

@@ -66,15 +66,14 @@ terraform/
 │   │   ├── providers.tf
 │   │   ├── terraform.tfvars.example
 │   │   └── variables.tf
-│   ├── dev/               # 실습 계층: NAT·ECS·Redis 등
-│   │   ├── data.tf
-│   │   ├── endpoints.tf   # S3 gateway endpoint (ARCH-01, DEC-026)
-│   │   ├── main.tf
-│   │   ├── outputs.tf
-│   │   ├── providers.tf
-│   │   ├── terraform.tfvars.example
-│   │   └── variables.tf
-│   └── backup/            # 개인 AWS 계정 백업 bucket(BACKUP-01). 2026-11-24 철거 중, bucket 삭제 후 디렉터리 제거(DEC-025)
+│   └── dev/               # 실습 계층: NAT·ECS·Redis 등
+│       ├── data.tf
+│       ├── endpoints.tf   # S3 gateway endpoint (ARCH-01, DEC-026)
+│       ├── main.tf
+│       ├── outputs.tf
+│       ├── providers.tf
+│       ├── terraform.tfvars.example
+│       └── variables.tf
 └── modules/
     ├── aurora/
     ├── ecr/
