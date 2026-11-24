@@ -19,7 +19,7 @@ export const options = {
       gracefulRampDown: '30s',
     },
   },
-  summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max'],
+  summaryTrendStats: ['avg', 'p(50)', 'p(95)', 'p(99)', 'max', 'count'],
 };
 
 export function setup() {
@@ -55,6 +55,8 @@ export function handleSummary(d) {
     error_rate: m.errors.values.rate,
     read_p50: m.read_ms.values['p(50)'], read_p95: m.read_ms.values['p(95)'], read_p99: m.read_ms.values['p(99)'],
     upload_p50: m.upload_ms.values['p(50)'], upload_p95: m.upload_ms.values['p(95)'],
+    // ARCH-01: upload count to normalise NAT bytes (output only, load unchanged).
+    uploads: m.upload_ms.values.count, data_sent: m.data_sent.values.count, data_received: m.data_received.values.count,
   };
   return { stdout: 'PERF_SUMMARY ' + JSON.stringify(out) + '\n' };
 }

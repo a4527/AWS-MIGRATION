@@ -2,14 +2,14 @@
 
 ## 현재 단계
 
-1단계(온프레미스)를 마치고 2단계(AWS 마이그레이션) 준비 단계다. 로컬 WSL2 + Docker Desktop에서 Compose 스택을 띄워 기능·장애·정합성 시나리오를 통과했다. 2026-11-18에 MIG-01(데이터 이전 없음)을 결정하고, PORT-01의 리전(us-east-1)·인증(access key)·보존 범위를 정해 Terraform을 유지/실습 계층으로 나눴다. 예산(월 $10)과 Owner 태그 강제를 코드에 넣었고 aws CLI·Terraform을 설치했다. access key로 로그인해 유지 계층 plan까지 확인했다. 2026-11-19에 AWS 배포 전 로컬 검증(V-LOC)을 마치고 유지 계층(`dev-data`)을 실제로 만든 뒤 state를 S3 원격 state로 옮겼다(IAC-01). 실습 계층(`dev`)은 아직 만들지 않았다. 2026-11-20에 SEC-01(SSM SecureString + write-only 생성)을 유지 계층에 적용했다. 장기 access key가 삭제되어 부트캠프 계정 인증을 `aws login`으로 바꿨다(DEC-014). 이전 Day 1~14 진행은 [이전 문서 요약](LEGACY.md)에 남겼다.
+4단계(비교·정리)다. 온프레미스 기준선(1단계), AWS 배포·계약 비교(2단계), 장애 복구·관측·배포 통제·백업·부하 검증(3단계)을 마쳤다. 2026-11-24에 ARCH-01 설계 비교와 개선 3건(S3 gateway endpoint, deregistration delay 30초, 목록 커서 페이지 PERF-02)의 전후 측정을 마쳤고, 개인 계정 백업(BACKUP-01)은 검증을 마친 뒤 철거했다(DEC-025). PORT-02도 마쳤고(비용은 정가 추정), 남은 것은 선택 과제 K8S-01과 철거 마무리다. 단계별 이전 경과는 [최근 변경](#최근-변경)과 작업일지, 이전 Day 1~14 진행은 [이전 문서 요약](LEGACY.md)에 있다.
 
 ## 구현 상태
 
-- 애플리케이션: 인증·사용자·파일 API, `Idempotency-Key` 업로드, 업로드 실패 보상과 관리자 고아 객체 점검, Redis 장애 우회·버전 비교 캐시, MinIO·S3 스트리밍 업로드가 구현되어 있다. 토큰 갱신·로그아웃, 검사 결과 DB 반영, 감사 로그는 미구현이다([PRD 차이](PRD.md#현재-구현과의-차이)).
+- 애플리케이션: 인증·사용자·파일 API, `Idempotency-Key` 업로드, 업로드 실패 보상과 관리자 고아 객체 점검, Redis 장애 우회·버전 비교 캐시, MinIO·S3 스트리밍 업로드, 목록 커서 페이지(`size`·`cursor`, PERF-02)가 구현되어 있다. 토큰 갱신·로그아웃, 검사 결과 DB 반영, 감사 로그는 미구현이다([PRD 차이](PRD.md#현재-구현과의-차이)).
 - 온프레미스: `docker-compose.yml`(nginx·backend·postgres·redis·minio, 검증용 `mc`)과 `.env.example`이 있다.
-- AWS: Terraform state는 S3 원격 state(bootstrap bucket, S3 자체 잠금)다. Terraform이 유지 계층(`dev-data`: VPC·S3·Aurora 0 ACU 자동 일시정지)과 실습 계층(`dev`: NAT·ALB·ECS·ECR·ElastiCache·Lambda·CloudWatch·선택형 HTTPS·OIDC 배포 role)으로 나뉜다([DEC-008](DECISIONS.md#결정-목록)). 기본 리전은 us-east-1이다. 데이터는 옮기지 않는다([DEC-007](DECISIONS.md#결정-목록)).
-- 비밀값: DB 비밀번호·JWT secret은 Terraform이 만들어 SSM SecureString에 두고 ECS `secrets`로 주입한다. tfvars·state·plan에 값이 없다([DEC-013](DECISIONS.md#결정-목록)). 유지 계층에는 적용했고(Aurora 비밀번호 교체), ECS가 이 값으로 기동하는지는 MIG-02에서 확인한다.
+- AWS: Terraform state는 S3 원격 state(bootstrap bucket, S3 자체 잠금)다. Terraform이 유지 계층(`dev-data`: VPC·S3·Aurora 0 ACU 자동 일시정지)과 실습 계층(`dev`: NAT·S3 gateway endpoint·ALB·ECS·ElastiCache·Lambda·CloudWatch·선택형 HTTPS)으로 나뉜다([DEC-008](DECISIONS.md#결정-목록)). 기본 리전은 us-east-1이다. 데이터는 옮기지 않는다([DEC-007](DECISIONS.md#결정-목록)).
+- 비밀값: DB 비밀번호·JWT secret은 Terraform이 만들어 SSM SecureString에 두고 ECS `secrets`로 주입한다. tfvars·state·plan에 값이 없다([DEC-013](DECISIONS.md#결정-목록)). MIG-02 이후 모든 실습에서 ECS가 이 값으로 기동했다.
 - CI/CD(2026-11-20 변경, DEC-015): main push가 테스트·Trivy를 통과하면 ECR push·ECS 배포까지 자동으로 한다. 실습 계층이 없으면 배포만 건너뛴다. 배포 role·ECR은 유지 계층에 있다. 이전 기록: PR 테스트·이미지 빌드·Trivy 검사, main 수동 실행 시 ECR push·ECS 배포 workflow가 있다.
 
 ## 검증 상태
@@ -23,19 +23,22 @@
 | Terraform | 두 계층 fmt/validate, mock provider plan 테스트, 오프라인 plan Owner 확인. 유지 계층은 실제 apply(27개 생성)·재 plan 변경 없음·예산 생성·Owner 누락 0개. 원격 state(S3 자체 잠금) 이전·잠금 경합·`force-unlock`·버전 복구 확인. 실습 계층 실제 plan/apply는 미수행 | [작업일지](worklogs/2026-11-19.md#유지-계층-apply-port-01), [2026-11-18](worklogs/2026-11-18.md#terraform-계층-분리), IAC-02는 [2026-11-17](worklogs/2026-11-17.md#iac-02-ecs-관리-책임-분리) |
 | 비밀값 주입(SEC-01) | 두 계층 validate, mock provider plan 테스트. 유지 계층 apply(SSM 1개 추가, Aurora 비밀번호 교체), plan JSON·state에 새 값 없음, 재 plan 변경 없음. 실습 계층 apply·task 기동 미수행 | [작업일지](worklogs/2026-11-20.md#sec-01-비밀값-주입) |
 | AWS 운영 검증 | VERIFY-01(기능·계약 비교), VERIFY-02(task 중지 복구 약 87초, 성능 smoke), OBS-01(요청 ID·SLI), OBS-02(알람 발화·SNS) 확인. 알람 이메일(ALARM·OK) 수신 확인 | [작업일지](worklogs/2026-11-20.md#2회차-verify-02와-obs-0102) |
-| 개인 계정 백업(BACKUP-01) | S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. 복원은 OPS-02 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
+| 개인 계정 백업(BACKUP-01) | 2026-11-23 검증: S3 교차 계정 복제(27초, 해시 일치, 삭제 미반영), 기존 객체 19개 일회 복사·목록 일치, `pg_dump` task 58초·사본 체크섬 일치·`pg_restore --list`, Lambda·검사 큐 무반응. **2026-11-24 철거**(DEC-025): 복제 규칙·role 삭제 완료, 개인 계정 bucket·IAM은 사용자 콘솔 삭제 대기 | [작업일지](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
 | 부하·확장(PERF-01) | 40 VU 같은 조건: 기준선(task 1) 59.4 rps·오류 0, Auto Scaling 1~4 72.9 rps·오류 0. 확장 후 축소 안 됨 → 메모리 정책 축소 끔(DEC-023) → 3 → 1 확인. Auto Scaling 3 task 상태에서 plan 변경 없음(IAC-02). task 중지 재실행: 중단 약 6분 44초, `no-healthy-target` 발화 확인 | [작업일지](worklogs/2026-11-24.md) |
-| GitHub Actions | actionlint, 로컬 Trivy(2026-11-23 Spring Boot 4 전환 후 예외 없이 0건), 테스트 67개 통과. GitHub 실제 실행(PR·자동 배포·건너뜀 경로) 미수행 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
+| 설계 비교·개선(ARCH-01, PERF-02) | 같은 40 VU 조건 처리량 59.4 → 206.9 rps, 조회 p95 1,783 → 121ms(페이지 처리). task 중지 중단 404 → 92초(delay 30초, rolling 배포 시간은 줄지 않음). S3 210MB 중 NAT 0.6MB, 업로드 바이트당 NAT 송신 2.25 → 1.12배(endpoint). k6 시험 트래픽의 NAT 왕복 발견 | [작업일지](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정), [설계 비교](proposals/ARCH-COMPARISON.md) |
+| GitHub Actions | actionlint, Trivy 0건, 테스트 69개 통과. GitHub 실제 실행: PR 검사, main 자동 배포(staging·smoke·승인 후 production), 롤백 drill(11-23), Terraform PR plan·승인 apply·drift 탐지 | [2026-11-16](worklogs/2026-11-16.md#cicd-01-pr이미지-검증-구현), [2026-11-20](worklogs/2026-11-20.md#cicd-자동-배포와-trivy-수정) |
 
 ## 다음 작업
 
-1. ARCH-01 비용·설계 비교. PERF-01에서 나온 개선 후보(목록 API 페이지 처리, 운영 target group deregistration delay 300초 단축)를 함께 검토한다.
+1. 개인 계정 bucket·IAM role·user 콘솔 삭제(사용자) → `terraform/environments/backup` 제거.
 2. 조직 관리자에게 Owner 비용 할당 태그 활성 여부 확인.
+3. 프로젝트 종료 시 Terraform 밖 리소스(Container Insights 로그 그룹 등) 정리.
 
 작업별 의존성과 수용 기준은 [TASKS](TASKS.md)에서 관리한다.
 
 ## 최근 변경
 
+- 2026-11-24 오후: ARCH-01 완료(설계 비교, 개선 3건 전후 측정), PERF-02 목록 커서 페이지 배포(API 호환성 깨짐, DEC-024), S3 gateway endpoint·deregistration delay 30초(DEC-026), 개인 계정 백업 철거(DEC-025). PR #13·#14 머지. PORT-02 완료(캡처 C27~C30).
 - 2026-11-24: 실습. PERF-01 기준선·확장 비교 완료, 메모리 정책이 축소를 막는 결함을 찾아 고쳤다(DEC-023). IAC-02 완료. 포트폴리오 캡처 구조(C01~C26)를 만들고 28장을 모두 반영했다. task 중지 재실행에서 중단이 6분 44초로 길어진 것을 기록했다(원인 미확인). 시험 데이터 7,183건 정리 후 실습 계층 destroy.
 - 2026-11-23: 실습. SEC-02(Boot 4 이미지 production 배포), IAC-03(drift 주입 → 탐지 47초 → 승인 apply 복구), CICD-03 drill B(production 런타임 실패 → smoke 감지 → 자동 롤백 3분 13초)를 마쳤다.
 - 2026-11-23: BACKUP-01. 부트캠프 file bucket을 개인 계정 bucket으로 복제하고(삭제 미복제), 실습 종료 전 `scripts/db-backup.sh`로 DB dump를 같은 경로로 보낸다(DEC-022). 부하 시험 데이터(파일 1,675개, 260MB)를 정리했다. Aurora가 11-20 밤 외부 요인으로 정지돼 있던 것을 발견해 다시 시작했다.

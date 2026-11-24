@@ -1,0 +1,11 @@
+05:49:31Z === PERF-01 baseline: scalable target min 1 max 1
+05:49:45Z k6 task started
+05:59:47Z k6 exit 0
+05:59:59Z   PERF_SUMMARY {"requests":113194,"rps":206.<acct>54,"error_rate":0,"read_p50":10.916801,"read_p95":121.<acct>58,"read_p99":198.<acct>93,"upload_p50":117.155274,"upload_p95":394.<acct>95,"uploads":11477,"data_sent":1221844660,"data_received":214989687}
+06:00:02Z   scaling 11:50:30 -> 11:51:06 Successful Setting desired count to 1.
+06:00:02Z   scaling 11:44:30 -> 11:45:04 Successful Setting desired count to 2.
+06:00:02Z   scaling 10:04:30 -> 10:05:33 Successful Setting desired count to 3.
+06:00:02Z   scaling 09:55:30 -> 09:56:35 Successful Setting desired count to 2.
+06:00:04Z   CPUUtilization max/min: 14:49=13 14:50=100 14:51=100 14:52=100 14:53=100 14:54=100 14:55=100 14:56=98 14:57=99 14:58=95
+06:00:06Z   RunningTaskCount max/min: 14:49=1 14:50=1 14:51=1 14:52=1 14:53=1 14:54=1 14:55=1 14:56=1 14:57=1 14:58=1
+06:00:09Z window 05:49:42Z -> 05:59:47Z

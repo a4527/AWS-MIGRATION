@@ -960,64 +960,23 @@ aws rds create-db-instance --db-instance-identifier $DST-1 --db-cluster-identifi
 
 S3 객체 복원: `aws s3api list-object-versions --prefix <key>`로 삭제 마커 `VersionId`를 찾아 `delete-object --version-id <marker>`로 지운다. 덮어쓴 경우에는 이전 버전을 `copy-object --copy-source <bucket>/<key>?versionId=<id>`로 복사한다(실측 15초).
 
-한계: PITR 보존이 1일이라 하루 넘게 지난 사고는 최종 스냅샷이나 [개인 계정 백업](#412-2-개인-계정-백업-backup-01)에 의존한다. 계정째 지워지는 위험은 계정 안 백업으로 막을 수 없다.
+한계: PITR 보존이 1일이라 하루 넘게 지난 사고는 최종 스냅샷에 의존한다. 계정째 지워지는 위험은 계정 안 백업으로 막을 수 없다. 이 위험에 대비한 [개인 계정 백업](#412-2-개인-계정-백업-backup-01)은 2026-11-24에 철거했다(DEC-025).
 
 ### 4.12-2 개인 계정 백업 (BACKUP-01)
 
-공유 계정 정리에 대비해 사본만 개인 AWS 계정에 둔다([ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), [DEC-022](../DECISIONS.md#결정-목록)). 실행 중 교차 계정 접근은 없다.
+2026-11-23에 구현한 개인 AWS 계정 백업(S3 교차 계정 복제 + `pg_dump` task, [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md))은 2026-11-24에 철거했다([DEC-025](../DECISIONS.md#결정-목록)). 복제(BACKUP-01)와 복원(OPS-02) 검증이 끝났고, 데이터는 시험 데이터뿐이며 프로젝트가 끝나면 모두 지울 예정이기 때문이다. 구성·실측은 [2026-11-23 작업일지](../worklogs/2026-11-23.md#backup-01-개인-계정-백업)에 남아 있다.
 
-| 대상 | 방법 | 시점 |
-| --- | --- | --- |
-| S3 file bucket 전체 | 교차 계정 복제(같은 리전, 삭제 마커·삭제 미복제, Standard) | 업로드 후 수 초~수 분(비동기, 보장 없음). 2026-11-23 실측 27초 |
-| DB | `scripts/db-backup.sh` → `pg_dump`를 file bucket `backups/db/<UTC 시각>.dump`에 올림 → 같은 복제 | 실습 종료 전 수동 |
+- 부트캠프 계정: 복제 규칙·복제 role을 `dev-data`에서 제거했다(2026-11-24 apply). 실습 계층의 dump task definition·SG·로그 그룹과 `scripts/db-backup.sh`도 지웠다.
+- 개인 계정: 백업 bucket은 role에 `s3:DeleteObjectVersion`이 없어 사용자가 콘솔에서 비우고 지운다. IAM user·MFA role도 Terraform 밖에서 만들었으므로 콘솔에서 지운다. 그 뒤 `terraform/environments/backup`과 로컬 state를 삭제한다.
+- 영향: 계정 밖 사본이 없다. 남은 보호는 계정 안 PITR(1일)·최종 스냅샷·S3 버전 관리([4.12-1](#412-1-백업-복원-ops-02))다.
 
-구성:
-
-- 부트캠프 계정(`dev-data/backup.tf`): 복제 role `fileshare-dev-s3-backup-replication`(trust `s3.amazonaws.com` + `aws:SourceAccount`·`aws:SourceArn`), 복제 규칙. `backup_account_id`·`backup_bucket_name`을 비우면 꺼진다.
-- 실습 계층(`dev/backup.tf`): dump task definition `fileshare-dev-db-backup`, 전용 SG(Aurora 5432·HTTPS만 나감)와 Aurora 허용 규칙, `backups/db/*` 쓰기만 있는 task role.
-- 개인 계정(`environments/backup`, 로컬 state, 프로필 `personal-backup-tf`): bucket `fileshare-backup-*`(퍼블릭 차단, SSE-S3, 버전 관리, `BucketOwnerEnforced`, 이전 버전 90일 만료), bucket policy(복제 role만 쓰기, TLS 강제). 실제 bucket 이름·계정 ID는 gitignore된 tfvars에만 둔다.
-
-처음 구성할 때 순서(bucket policy가 role ARN을 principal로 검사하므로):
-
-```bash
-cd terraform/environments/dev-data
-AWS_PROFILE=bootcamp-tf terraform apply -target=aws_iam_role_policy.backup_replication   # 1. 복제 role
-aws sts get-caller-identity --profile personal-backup                                      # 2. MFA (별도 터미널)
-cd ../backup && terraform init && terraform apply                                          # 3. 개인 계정 bucket
-cd ../dev-data && AWS_PROFILE=bootcamp-tf terraform apply                                  # 4. 복제 규칙
-```
-
-규칙 이전 객체는 복제되지 않는다. 한 번 따로 복사한다(2026-11-23에는 19개라 부트캠프에서 내려받아 `personal-backup-tf`로 Content-Type을 유지해 올렸다).
-
-DB dump(실습 계층이 떠 있을 때):
-
-```bash
-AWS_PROFILE=bootcamp-tf scripts/db-backup.sh
-# task: <id>  key: backups/db/<시각>.dump
-# {"containers":[{"name":"pg-dump","exit":0},{"name":"upload","exit":0}]}
-# {"bytes": ..., "replication": "PENDING" 또는 "COMPLETED"}
-```
-
-- 두 컨테이너 중 하나라도 0이 아니면 실패로 끝난다. 로그는 `/ecs/fileshare-dev-db-backup`.
-- Aurora가 **정지**(`stopped`) 상태면 `psql`/`pg_dump`가 `timeout expired`로 실패한다. [트러블슈팅](../TROUBLESHOOTING.md#pg_dump-task가-timeout-expired로-실패함)
-- 확인: 원본 `head-object`의 `ReplicationStatus`가 `COMPLETED`, 개인 계정 사본이 `REPLICA`이고 `--checksum-mode ENABLED`의 SHA-256이 같다. `pg_restore --list`로 읽히는지 본다.
-
-시험 데이터를 대량으로 만드는 실습(PERF-01):
-
-1. `dev-data`에 `backup_replication_paused = true` → apply. 멈춘 동안 생긴 객체는 다시 켜도 복제되지 않는다.
-2. 실습 후 시험 사용자(`perf-*@example.com`)의 `files`·`upload_requests`·`users` 행을 한 트랜잭션으로 지우고, 그 `storage_path`의 모든 객체 버전을 지운다.
-3. `false`로 되돌려 apply.
-
-백업 쪽에서 지우지 않는다. 개인 계정 role에는 `s3:DeleteObjectVersion`이 없다.
-
-한계: 복제 실패(`FAILED`)는 알림·자동 재시도가 없다. 실습 종료 때 `backups/db/` 최신 객체의 상태를 확인한다. DB는 마지막 dump 시점까지만 있고, 그 뒤 업로드된 파일은 사본에 객체만 있다. 복원 절차는 OPS-02 범위다. 비용: 같은 리전이라 전송료가 없고, 현재 사본(약 18MB)은 개인 계정에서 월 1센트 미만이다.
+시험 데이터를 대량으로 만드는 실습(PERF-01)은 이제 복제를 멈출 필요가 없다. 실습 후 시험 사용자(`perf-*@example.com`)의 `files`·`upload_requests`·`users` 행을 한 트랜잭션으로 지우고, 그 `storage_path`의 모든 객체 버전을 지우는 정리는 그대로 한다.
 
 ### 4.12 정리
 
-실습이 끝나면 비용 방지를 위해 **실습 계층만** 삭제한다. 지우기 전에 DB dump를 떠 개인 계정으로 보낸다([개인 계정 백업](#412-2-개인-계정-백업-backup-01)).
+실습이 끝나면 비용 방지를 위해 **실습 계층만** 삭제한다. 2026-11-24 개인 계정 백업 철거([DEC-025](../DECISIONS.md#결정-목록)) 이후 삭제 전 DB dump 단계는 없다.
 
 ```bash
-AWS_PROFILE=bootcamp-tf scripts/db-backup.sh   # BACKUP OK 확인
 cd terraform/environments/dev
 terraform destroy
 ```

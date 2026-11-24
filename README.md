@@ -2,7 +2,7 @@
 
 Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 운영 기준선을 만든 뒤, 같은 API·데이터 계약을 유지한 채 Terraform으로 구성한 AWS로 옮기는 프로젝트입니다.
 
-온프레미스 기준선, AWS 배포·계약 비교, 장애 주입·복원·배포 롤백·drift·계정 밖 백업, 부하·확장 실험(PERF-01)까지 마쳤습니다(2026-11-24). 남은 것은 비용·설계 비교(ARCH-01)입니다. 성과 요약은 [포트폴리오](docs/PORTFOLIO.md), 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
+온프레미스 기준선, AWS 배포·계약 비교, 장애 주입·복원·배포 롤백·drift·계정 밖 백업(검증 후 철거), 부하·확장 실험(PERF-01), 비용·설계 비교와 측정 기반 개선(ARCH-01: 목록 커서 페이지로 같은 조건 처리량 3.5배, task 교체 중단 404 → 92초, S3 gateway endpoint)까지 마쳤습니다(2026-11-24). 남은 것은 포트폴리오 캡처 마무리(PORT-02)와 선택 과제(K8S-01)입니다. 성과 요약은 [포트폴리오](docs/PORTFOLIO.md), 진행 상태는 [PROGRESS](docs/PROGRESS.md)를 보세요.
 
 ![AWS Architecture](docs/assets/portfolio-aws-architecture.png)
 
@@ -17,7 +17,7 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 | 파일 | MinIO | S3 (`files/` 접두어) |
 | 후처리·검사 | 없음(`NOT_SCANNED`) | S3 이벤트 → Lambda(확장자 가드), GuardDuty 악성코드 검사 → EventBridge → SQS |
 | 배포 | `docker compose up` | GitHub Actions(OIDC) → ECR → staging smoke → 승인 → production(실패 시 자동 롤백) |
-| 관측·백업 | 로그 | CloudWatch 대시보드·SLI·알람(SNS), 개인 계정 교차 계정 백업 |
+| 관측·백업 | 로그 | CloudWatch 대시보드·SLI·알람(SNS), Aurora PITR·S3 버전 관리(개인 계정 백업은 2026-11-24 철거) |
 
 구조와 흐름은 [DESIGN](docs/DESIGN.md)과 [아키텍처 페이지](docs/assets/architecture-overview.html)에 있습니다.
 

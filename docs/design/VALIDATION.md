@@ -652,7 +652,7 @@ docker stats --no-stream backend
 | OBS-02 | V-OBS-03 |
 | OPS-01 | V-OPS-01~05 |
 | OPS-02 | V-BAK-01~02 |
-| BACKUP-01 | V-BAK-03~04 |
+| BACKUP-01 | V-BAK-03~04 (2026-11-24 철거, 실행 안 함) |
 | FILE-03 | V-SCAN-01~05 |
 | CICD-02/03 | V-CICD-01~03 |
 | IAC-03 | V-IAC-01~03 |
@@ -739,8 +739,8 @@ V-AWS-05(Lambda 실패)와 V-AWS-04(task 중지)를 실행한다.
 
 - V-BAK-01: [백업 복원](DEPLOYMENT.md#412-1-백업-복원-ops-02) 절차로 별도 클러스터에 PITR → 일회성 `psql` task로 복원본·운영본 `files` 행 수 비교 → 복원본 모든 `storage_path`의 S3 객체 존재·크기·표본 해시 확인 → 검증 클러스터 삭제. 판정: RPO(사고 시각 − `LatestRestorableTime`) 5분 이하, RTO(복원 시작 → 검증 완료) 60분 이하, 불일치 0.
 - V-BAK-02: S3 객체 삭제 후 삭제 마커 제거로 복구. 판정: 같은 해시.
-- V-BAK-03 (BACKUP-01): file bucket에 `files/` 밖 시험 객체를 올리고 `ReplicationStatus`가 `COMPLETED`가 될 때까지 시간을 잰다 → 개인 계정 사본 `REPLICA`·해시 확인 → 원본 삭제(삭제 마커) 1분 뒤 개인 계정에 버전 1개·삭제 마커 0개 → 원본 시험 객체 버전 정리. 판정: 복제 완료, 해시 일치, 사본 유지.
-- V-BAK-04 (BACKUP-01): [개인 계정 백업](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)의 `scripts/db-backup.sh` 실행 → 두 컨테이너 exit 0, 원본·사본 SHA-256 일치, 사본 `pg_restore --list`에 테이블 데이터가 보임. file-processor Lambda 호출 수·검사 결과 큐·DLQ가 0이고 dump에 GuardDuty 태그가 없음. 판정: 모두 충족.
+- V-BAK-03 (BACKUP-01, 2026-11-24 철거로 더 이상 실행하지 않음, [DEC-025](../DECISIONS.md#결정-목록)): file bucket에 `files/` 밖 시험 객체를 올리고 `ReplicationStatus`가 `COMPLETED`가 될 때까지 시간을 잰다 → 개인 계정 사본 `REPLICA`·해시 확인 → 원본 삭제(삭제 마커) 1분 뒤 개인 계정에 버전 1개·삭제 마커 0개 → 원본 시험 객체 버전 정리. 판정: 복제 완료, 해시 일치, 사본 유지.
+- V-BAK-04 (BACKUP-01, 2026-11-24 철거로 더 이상 실행하지 않음, `scripts/db-backup.sh` 삭제): [개인 계정 백업](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)의 `scripts/db-backup.sh` 실행 → 두 컨테이너 exit 0, 원본·사본 SHA-256 일치, 사본 `pg_restore --list`에 테이블 데이터가 보임. file-processor Lambda 호출 수·검사 결과 큐·DLQ가 0이고 dump에 GuardDuty 태그가 없음. 판정: 모두 충족.
 
 ### V-SCAN-01~05 악성코드 검사 (FILE-03)
 
@@ -770,6 +770,6 @@ V-AWS-05(Lambda 실패)와 V-AWS-04(task 중지)를 실행한다.
 
 ECS 일회성 task(k6)로 AWS 안에서 부하를 준다: 0→40 VU 2분, 40 VU 6분, 감소 1분, 요청 비율 단건 70%·목록 20%·100KB 업로드 10%. 같은 조건을 (a) task 1개 고정(scalable target max 1), (b) Auto Scaling 1~4로 두 번 실행한다. 판정: 처리량·오류율·p50/p95, task 수 변화와 확장·축소 시각, CPU를 기록하고 (a)와 비교한다. 축소는 부하 종료 뒤 15분 이상 걸린다.
 
-실행: `python3 -I scripts/drills/perf01_load.py <out> baseline|scaling <owner-tag>`. 시작 전 `dev-data`에 `backup_replication_paused = true`, 끝나면 `perf-*` 사용자의 행·객체 버전을 지우고 되돌린다([개인 계정 백업](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)).
+실행: `python3 -I scripts/drills/perf01_load.py <out> baseline|scaling <owner-tag>`. 끝나면 `perf-*` 사용자의 행·객체 버전을 지운다. 2026-11-24 개인 계정 백업 철거([DEC-025](../DECISIONS.md#결정-목록)) 이후 복제를 멈추는 단계는 없다([정리](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)).
 
 결과(2026-11-24): (a) 59.4 rps·오류 0·읽기 p95 1.78초, (b) 72.9 rps·오류 0·읽기 p95 1.78초, task 1 → 2 → 3. 확장 뒤 메모리 정책이 축소를 막아 고쳤다(DEC-023). 한계: 목록 API에 페이지 처리가 없어 시험 중 쌓이는 파일만큼 목록 응답이 무거워진다. 원본은 [perf-01](../assets/perf-01/), 해석은 [작업일지](../worklogs/2026-11-24.md#perf-01-부하확장-v-perf-03).

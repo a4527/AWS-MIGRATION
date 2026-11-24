@@ -60,7 +60,6 @@ terraform/
 ├── environments/
 │   ├── dev-data/          # 유지 계층: VPC·S3·Aurora
 │   │   ├── .terraform.lock.hcl
-│   │   ├── backup.tf      # 개인 계정 복제 role·규칙 (BACKUP-01)
 │   │   ├── backend.tf.example
 │   │   ├── main.tf
 │   │   ├── outputs.tf
@@ -68,14 +67,14 @@ terraform/
 │   │   ├── terraform.tfvars.example
 │   │   └── variables.tf
 │   ├── dev/               # 실습 계층: NAT·ECS·Redis 등
-│   │   ├── backup.tf      # DB dump 일회성 task (BACKUP-01)
 │   │   ├── data.tf
+│   │   ├── endpoints.tf   # S3 gateway endpoint (ARCH-01, DEC-026)
 │   │   ├── main.tf
 │   │   ├── outputs.tf
 │   │   ├── providers.tf
 │   │   ├── terraform.tfvars.example
 │   │   └── variables.tf
-│   └── backup/            # 개인 AWS 계정: 백업 bucket·policy (로컬 state, BACKUP-01)
+│   └── backup/            # 개인 AWS 계정 백업 bucket(BACKUP-01). 2026-11-24 철거 중, bucket 삭제 후 디렉터리 제거(DEC-025)
 └── modules/
     ├── aurora/
     ├── ecr/
@@ -90,7 +89,7 @@ terraform/
     └── vpc/
 ```
 
-부트캠프 계정 루트 모듈은 두 개이고 state도 따로 둔다. 개인 계정 루트 `backup`은 로컬 state로 따로 적용한다([DEC-008](../DECISIONS.md#결정-목록)). `terraform plan`과 `terraform apply`는 각 디렉터리에서 실행한다.
+부트캠프 계정 루트 모듈은 두 개이고 state도 따로 둔다([DEC-008](../DECISIONS.md#결정-목록)). 개인 계정 루트 `backup`(로컬 state)은 2026-11-24 철거 결정([DEC-025](../DECISIONS.md#결정-목록))에 따라 bucket을 지운 뒤 함께 지운다. `terraform plan`과 `terraform apply`는 각 디렉터리에서 실행한다.
 
 `terraform/modules/*`는 재사용 가능한 하위 모듈이다. 하위 모듈은 단독으로 실행하는 영역이 아니라, 루트 모듈의 `main.tf`에서 호출될 때 실제 인프라 구성에 포함된다.
 
@@ -100,12 +99,12 @@ terraform/
 
 | 계층 | 디렉터리 | 리소스 | 수명 | 쉬는 동안 비용 |
 | --- | --- | --- | --- | --- |
-| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role, CloudTrail trail·로그 bucket·변경 알림 EventBridge 규칙(SEC-03), 개인 계정 백업 복제 role·규칙(BACKUP-01) | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
-| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application·dump task 허용 규칙, SSM JWT secret, DB dump task definition·SG·role(BACKUP-01) | 실습마다 apply → destroy | 없음 |
+| 유지 | `environments/dev-data` | VPC·IGW·subnet·route table, S3 file bucket, Aurora cluster·instance·subnet group·SG, SSM DB 비밀번호, ECR, GitHub Actions OIDC provider·배포 role, CloudTrail trail·로그 bucket·변경 알림 EventBridge 규칙(SEC-03) | 계속 유지. Aurora는 `deletion_protection`으로 실수 삭제를 막는다 | S3·Aurora 스토리지·ECR 이미지(현재 규모 몇 센트). VPC·subnet·IGW·SG·IAM은 무료 |
+| 실습 | `environments/dev` | NAT Gateway·EIP·private 기본 경로, ALB·ECS·IAM(ECS role)·Lambda·S3 알림, ElastiCache, Aurora SG의 application 허용 규칙, SSM JWT secret, S3 gateway endpoint(DEC-026) | 실습마다 apply → destroy | 없음 |
 
 - Aurora는 `min_capacity = 0`이라 연결이 없으면 `seconds_until_auto_pause`(기본 300초) 뒤 컴퓨트를 멈춘다. 멈춘 동안은 스토리지만 과금되고, 첫 연결에서 다시 깨어나는 데 약 15초가 걸린다(AWS 설명 기준, 실측 전). ECS가 떠 있는 동안은 연결 풀이 연결을 유지하므로 멈추지 않는다.
 - 실습 계층은 유지 계층 리소스를 state가 아니라 이름·태그로 조회한다(`dev/data.tf`). 그래서 IAC-01에서 backend를 S3로 바꿨어도 계층 간 연결은 그대로다. state는 `terraform/bootstrap`이 만든 bucket에 계층별 key로 있고 S3 자체 잠금을 쓴다([DEC-011](../DECISIONS.md#결정-목록)).
-- 개인 계정 백업(BACKUP-01, 2026-11-23 구현): 유지 계층이 file bucket 전체를 개인 AWS 계정 bucket으로 교차 계정 복제하고(삭제 미복제), 실습 계층의 일회성 task가 DB dump를 `backups/db/`에 올려 같은 복제로 보낸다. 개인 계정 bucket은 별도 루트 `environments/backup`(로컬 state)이 만든다. 실행 중 교차 계정 접근은 없다([DEC-012](../DECISIONS.md#결정-목록), [DEC-022](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), [런북](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)). 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
+- 개인 계정 백업(BACKUP-01): 2026-11-23에 file bucket 교차 계정 복제와 DB dump task로 구현했으나 2026-11-24에 철거했다([DEC-025](../DECISIONS.md#결정-목록), 이전 결정 [DEC-012](../DECISIONS.md#결정-목록)·[ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md), [런북](DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)). 두 계층의 `project_name`·`environment`·`file_bucket_name`이 같아야 한다.
 - 계층에 걸친 연결은 실습 계층이 만들고 지운다: NAT 경로(`aws_route`)는 유지 계층의 private route table에, `5432 from Application SG` 규칙은 유지 계층의 Aurora SG에 붙는다. 실습 계층을 지우면 Aurora로 들어오는 규칙이 없어진다.
 - Aurora 비밀번호는 유지 계층이 만들어 SSM SecureString에 두고, 실습 계층은 parameter ARN만 task definition에 넣는다(SEC-01, [DEC-013](../DECISIONS.md#결정-목록)). JWT secret parameter는 실습 계층이 만들고 지운다.
 - 순서: 생성은 `dev-data` → `dev`, 삭제는 `dev`만. 유지 계층을 지우려면 `aurora_deletion_protection = false`를 먼저 apply하고, 기본값으로 최종 스냅샷(`<prefix>-aurora-final`)을 남긴다.
@@ -402,7 +401,7 @@ assign_public_ip = false
 
 이 구조에서는 외부 사용자가 ECS task에 직접 접근할 수 없다. 사용자는 반드시 ALB를 통해 들어와야 한다.
 
-ECS task가 ECR에서 이미지를 pull하거나 CloudWatch Logs로 로그를 전송하거나 외부 AWS API를 호출해야 할 때는 NAT Gateway를 통해 outbound 통신한다.
+ECS task가 ECR API를 호출하거나 CloudWatch Logs로 로그를 전송하거나 SSM·SQS 같은 AWS API를 호출해야 할 때는 NAT Gateway를 통해 outbound 통신한다. S3 요청(파일 업로드·다운로드, S3에서 받는 ECR 이미지 레이어)은 2026-11-24부터 S3 gateway endpoint로 나간다([S3 Gateway Endpoint](#s3-gateway-endpoint), [DEC-026](../DECISIONS.md#결정-목록)).
 
 ## Database Subnet
 
@@ -434,7 +433,15 @@ private subnet 2
   -> Internet Gateway
 ```
 
-이 방식은 비용은 낮지만 NAT Gateway가 위치한 AZ 또는 NAT Gateway 자체에 장애가 나면 private subnet outbound 통신에 영향이 갈 수 있다.
+이 방식은 비용은 낮지만 NAT Gateway가 위치한 AZ 또는 NAT Gateway 자체에 장애가 나면 private subnet outbound 통신에 영향이 갈 수 있다. S3 경로는 아래 gateway endpoint를 타므로 NAT 장애와 무관하다(추정, 장애 재현 안 함). NAT 구성 대안 비교는 [설계 비교](../proposals/ARCH-COMPARISON.md)에 있다.
+
+## S3 Gateway Endpoint
+
+실습 계층의 `endpoints.tf`가 유지 계층 private route table에 S3 gateway endpoint를 붙인다(`s3_gateway_endpoint_enabled`, 기본 켬, ARCH-01·[DEC-026](../DECISIONS.md#결정-목록)). 실습 계층과 함께 만들고 지운다.
+
+- 효과: backend의 S3 요청과 ECR 이미지 레이어(S3에서 받음)가 NAT 처리 요금($0.045/GB)을 내지 않는다. gateway endpoint는 시간·데이터 요금이 없다.
+- 범위: S3만 해당한다. ECR API·CloudWatch Logs·SSM·SQS는 계속 NAT를 지난다. 이것들까지 빼려면 interface endpoint(AZ당 시간 요금)가 필요하며, 현재 규모에서는 NAT 1개보다 비싸 채택하지 않았다([설계 비교](../proposals/ARCH-COMPARISON.md)).
+- endpoint policy는 기본값(전체 허용)이다. 접근 제한은 task role·bucket 쪽 IAM이 맡는다.
 
 ## Security Group 설계
 
@@ -481,7 +488,7 @@ Outbound:
   all traffic to 0.0.0.0/0
 ```
 
-이 outbound는 Aurora, Redis, S3, CloudWatch, ECR 접근에 필요하다. 운영 환경에서 더 엄격히 제한하려면 VPC endpoint와 prefix list 기반 egress 제한을 함께 설계해야 한다.
+이 outbound는 Aurora, Redis, S3, CloudWatch, ECR 접근에 필요하다. S3는 gateway endpoint(prefix list 경로)로 나간다. 운영 환경에서 더 엄격히 제한하려면 나머지 서비스의 interface endpoint와 prefix list 기반 egress 제한을 함께 설계해야 한다.
 
 ### Aurora SG
 
@@ -951,15 +958,15 @@ Health check 설정과 의미:
 | 간격 / 시간 제한 | 30초 / 5초 | |
 | healthy 판정 | 2회 연속 성공 | 새 task는 등록 후 최소 약 1분 뒤 healthy |
 | unhealthy 판정 | 3회 연속 실패 | 죽은 task 감지에 최대 약 1분 30초 |
-| deregistration delay | 300초(기본값, 미설정) | 빠지는 task를 5분 동안 `draining`으로 둔다 |
+| deregistration delay | 30초(`ecs_deregistration_delay_seconds`, 2026-11-24 이전은 기본값 300초) | 빠지는 task를 30초 동안 `draining`으로 둔다. 요청은 수 초 안에 끝난다 |
 
-- 근거 수준: Terraform 초기값이다. 실측 근거로 정한 값이 아니다.
+- 근거 수준: 간격·판정 횟수는 Terraform 초기값이다. deregistration delay는 2026-11-24 task 중지 중단 6분 44초(delay 300초가 끝난 뒤 새 task 시작)를 근거로 30초로 줄였다([DEC-026](../DECISIONS.md#결정-목록)).
 - 2026-11-20 V-AWS-04 실측: task 중지 시 ALB 502/503이 약 87초 이어졌다. 새 task가 정식으로 `healthy`가 되기까지는 그보다 약 1분 더 걸렸다. 그 사이의 200은 ALB fail-open(모든 target이 unhealthy이면 그래도 전달) 덕분이다([작업일지](../worklogs/2026-11-20.md#verify-02-v-aws-04-v-perf)).
 - 판단:
   - 간격 10초·healthy 2회·deregistration 30초로 줄이면 복구가 빨라진다.
   - 너무 민감하면 잠깐 느린 task도 빠지고(GC·DB 재개 중), 배포 중 연결이 끊길 수 있다.
   - ECS service의 health check grace period로 기동 시간(실측 약 1분 30초)을 보호하는 방법도 있다.
-  - 조정과 재측정은 OPS-01에서 한다.
+  - deregistration delay 단축은 2026-11-24 적용했다(ARCH-01). 간격·healthy 횟수 조정은 하지 않았다.
 
 ## Listener
 
@@ -1532,7 +1539,7 @@ CI/CD에서는 GitHub Actions가 이 과정을 수행하게 만들 수 있다.
 
 후속 보강할 보안 항목은 다음이다.
 
-- VPC endpoint로 S3/ECR/CloudWatch 접근 최적화
+- interface endpoint로 ECR API/CloudWatch 접근 최적화(S3 gateway endpoint는 2026-11-24 적용)
 - ALB access log 활성화
 - WAF 적용 검토
 - 추가 IAM condition과 egress 제한 검토
@@ -1574,7 +1581,7 @@ ALB target health
 - 비밀값 자동 교체(rotation) 없음. SSM parameter 버전을 올려 수동 교체한다
 - ALB access log
 - WAF
-- VPC endpoint
+- VPC endpoint는 S3 gateway만 있다. ECR API·CloudWatch Logs·SSM·SQS는 NAT를 지난다
 - 실제 바이러스 검사 엔진 연동
 - Lambda 후처리 결과와 DB 상태 동기화
 - 로컬에서 Aurora에 접근하는 경로가 없다. MIG-01에서 데이터 이전을 하지 않기로 해서([DEC-007](../DECISIONS.md#결정-목록)) 만들지 않았다. DB를 직접 조회해야 하면 ECS task나 별도 경로를 추가로 정한다.
@@ -1595,4 +1602,4 @@ ALB target health
 - Terraform 루트 모듈은 `terraform/environments/dev`이다.
 - `terraform.tfvars`는 변수 값만 공급하고, 실제 리소스 구조는 `.tf` 파일과 모듈들이 결정한다.
 
-이 구조를 기준으로 다음 단계에서는 VPC endpoint, ALB access log, WAF, 실제 바이러스 검사와 DB 상태 동기화를 보강하면 된다.
+이 구조를 기준으로 다음 단계에서는 interface endpoint(필요 시), ALB access log, WAF, 실제 바이러스 검사와 DB 상태 동기화를 보강하면 된다. S3 gateway endpoint는 2026-11-24에 적용했다.
