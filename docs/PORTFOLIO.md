@@ -1,4 +1,4 @@
-외부(고객사·면접)에 프로젝트 성과를 설명할 때 쓰는 근거 문서다. 2026-11-23에 실제 실행 결과 기준으로 다시 썼고, 2026-11-24에 PERF-01 결과와 화면 캡처를 넣었다. 모든 수치는 작업일지의 실측이며, 실행하지 않은 항목은 **미실행**으로 따로 적는다. 상세 계약·절차는 링크한 기준 문서를 따른다. 이전 포트폴리오 서술은 [이전 문서 요약](LEGACY.md)에 남겼다.
+외부(고객사·면접)에 프로젝트 성과를 설명할 때 쓰는 근거 문서다. 2026-11-23에 실제 실행 결과 기준으로 다시 썼고, 2026-11-24에 PERF-01 결과와 화면 캡처를 넣었고, 같은 날 오후 ARCH-01 설계 비교·개선 3건 전후 측정(S3 gateway endpoint, deregistration delay 30초, 목록 커서 페이지 PERF-02)과 개인 계정 백업 철거를 반영했다. 모든 수치는 작업일지의 실측이며, 실행하지 않은 항목은 **미실행**으로 따로 적는다. 상세 계약·절차는 링크한 기준 문서를 따른다. 이전 포트폴리오 서술은 [이전 문서 요약](LEGACY.md)에 남겼다.
 
 상태 표기: **완료**(실제 AWS·로컬에서 수용 기준 확인) / **구현**(코드·설정만, 실행 증빙 없음) / **미실행**(계획만).
 
@@ -17,9 +17,10 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 | 기동 실패 배포 | staging에서 circuit breaker 자동 롤백, 운영 승격 차단 | 깨진 이미지가 운영에 가지 않음 |
 | 기능이 깨진 운영 배포 | smoke 감지 → 직전 revision 자동 롤백 **3분 13초** | health는 정상인데 기능이 깨진 경우도 복구 |
 | 인프라 drift | 수동 변경 **47초** 만에 탐지 → 승인 apply로 복구 | 코드와 실제의 차이를 놓치지 않음 |
-| 계정 밖 백업 | S3 복제 27초, DB dump 58초, 체크섬 일치 | 공유 계정이 지워져도 사본 유지 |
+| 계정 밖 백업 | S3 복제 27초, DB dump 58초, 체크섬 일치(11-23 검증) | 검증 후 2026-11-24 철거(DEC-025). 지금은 계정 내 PITR·S3 버전 관리만 |
 | 부하·확장 | 40 VU에서 처리량 59.4 → 72.9 rps(+23%), 오류 0 | task 1 → 3 자동 확장, 축소 결함을 찾아 고친 뒤 3 → 1 |
-| 검증에서 찾아 고친 결함 | 14건 | [8장](#8-검증하면서-찾아-고친-결함) |
+| 측정 기반 개선(ARCH-01) | 목록 커서 페이지로 같은 task 1개 처리량 59.4 → **206.9 rps**, 조회 p95 1.78초 → **0.12초**. task 교체 중단 404초 → **92초**. S3 트래픽 NAT 경유 0 | 비교 → 개선 → 같은 조건 재측정 |
+| 검증에서 찾아 고친 결함 | 16건(+ 측정 설계 발견 1건) | [8장](#8-검증하면서-찾아-고친-결함) |
 
 ## 2. 문제 정의와 제약
 
@@ -32,7 +33,7 @@ Spring Boot 파일 공유 API를 로컬 Docker Compose(온프레미스)에서 �
 
 | 제약 | 설계에 준 영향 |
 | --- | --- |
-| 부트캠프 **공유 AWS 계정**, 정리 정책이 Owner 태그 없는 리소스와 장기 access key를 지움 | 모든 리소스 Owner 태그 강제(DEC-009), `aws login` 단기 자격 증명(DEC-014), 개인 계정 백업(ADR-002) |
+| 부트캠프 **공유 AWS 계정**, 정리 정책이 Owner 태그 없는 리소스와 장기 access key를 지움 | 모든 리소스 Owner 태그 강제(DEC-009), `aws login` 단기 자격 증명(DEC-014), 개인 계정 백업(ADR-002, 검증 후 철거 DEC-025) |
 | 월 예산 **$10** | 유지/실습 계층 분리, Aurora 0 ACU 자동 일시정지, NAT 1개, 실습마다 destroy(DEC-008) |
 | 1인 운영, 하루 몇 시간 실습 | 사람의 승인은 운영 배포·인프라 적용에만, 나머지는 자동 판정 |
 | 실제 운영 트래픽 없음 | SLO는 "실습 세션 단위"로 정의하고 장기 가용성 실적으로 주장하지 않음 |
@@ -52,13 +53,13 @@ Client → nginx(:8080) → backend(Spring Boot)
 
 ```text
                        ┌──────────────────────────── VPC 10.20.0.0/16 (2 AZ) ─────────────────────────────┐
-Client ──HTTP(S)──▶ ALB │ public subnet  : ALB, NAT Gateway(1)                                              │
+Client ──HTTP(S)──▶ ALB │ public subnet  : ALB, NAT Gateway(1)   private route → S3 gateway endpoint         │
                         │ private subnet : ECS Fargate backend (운영 서비스 + staging 서비스)                 │
                         │ database subnet: Aurora PostgreSQL Serverless v2, ElastiCache Redis (인터넷 경로 없음) │
                         └───────────────────────────────────────────────────────────────────────────────────┘
 ECS backend ─▶ S3 file bucket (files/) ─┬▶ Lambda (확장자 가드·메타데이터 태그)
-                                        ├▶ GuardDuty Malware Protection ─▶ EventBridge ─▶ SQS(+DLQ) ─▶ backend
-                                        └▶ 교차 계정 복제 ─▶ 개인 AWS 계정 백업 bucket
+                                        └▶ GuardDuty Malware Protection ─▶ EventBridge ─▶ SQS(+DLQ) ─▶ backend
+ECS ─(S3·ECR 이미지 레이어)─▶ S3 gateway endpoint      ECS ─(ECR API·Logs·SSM·SQS)─▶ NAT
 GitHub Actions ─OIDC─▶ ECR ─▶ ECS (staging → 승인 → production)
 CloudWatch(지표·로그·대시보드·알람) ─▶ SNS ─▶ 이메일      CloudTrail ─▶ EventBridge ─▶ SNS (네트워크 변경 알림)
 ```
@@ -67,8 +68,8 @@ CloudWatch(지표·로그·대시보드·알람) ─▶ SNS ─▶ 이메일    
 | --- | --- | --- |
 | 리전 | us-east-1 | 서울보다 단가가 낮고 신규 기능이 먼저 나옴(DEC-006) |
 | 네트워크 | 2 AZ × public·private·database subnet | ALB만 public. DB·캐시는 인터넷 경로가 없는 subnet |
-| NAT | 1개 | AZ별 NAT는 월 고정비가 두 배. 한 AZ 장애 시 아웃바운드가 끊기는 한계를 감수(ARCH-01 비교 대상) |
-| 컴퓨트 | ECS Fargate 0.5 vCPU / 1GB, 운영 1~4 task + staging 1 task | 서버 관리 없음. Kubernetes 운영 부담 없이 rolling 배포·circuit breaker 사용 |
+| NAT | 1개 + S3 gateway endpoint | AZ별 NAT는 월 고정비가 두 배($36.6 → $73.2). 한 AZ 장애 시 아웃바운드가 끊기는 한계를 감수. S3·ECR 레이어는 무료 gateway endpoint로 NAT를 거치지 않음(DEC-026) |
+| 컴퓨트 | ECS Fargate 0.5 vCPU / 1GB, 운영 1~4 task + staging 1 task, 운영 target group deregistration delay 30초 | 서버 관리 없음. Kubernetes 운영 부담 없이 rolling 배포·circuit breaker 사용. delay를 기본 300초에서 줄여 task 교체 중단을 줄임(DEC-026) |
 | DB | Aurora PostgreSQL 16 Serverless v2, 0~2 ACU, 300초 무연결 시 일시정지 | 온프레미스 PostgreSQL과 스키마 호환. 쉬는 동안 스토리지만 과금 |
 | 캐시 | ElastiCache Redis `cache.t4g.micro` 1노드, 전송·저장 암호화 | 원본이 아닌 캐시라 단일 노드로 충분(장애 시 DB 우회) |
 | 파일 | S3, `files/` 접두어, 버전 관리·SSE-S3·퍼블릭 차단 | 앱·Lambda·GuardDuty 권한을 접두어로 제한 |
@@ -79,15 +80,18 @@ CloudWatch(지표·로그·대시보드·알람) ─▶ SNS ─▶ 이메일    
 ![C11 ALB 리소스 맵](assets/captures/c11-alb-resource-map.png)
 *C11. ALB 리스너 → 규칙(`X-Deploy-Stage` 헤더면 staging) → 대상 그룹 2개 → 정상 대상.*
 
+![C28 S3 gateway endpoint](assets/captures/c28-s3-gateway-endpoint.png)
+*C28. S3 gateway endpoint(`fileshare-dev-s3-gateway`)가 private route table에 연결됨. backend의 S3 요청과 ECR 이미지 레이어는 NAT를 거치지 않는다(DEC-026).*
+
 ### 유지 계층과 실습 계층 (비용 구조의 핵심)
 
 Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 실습할 때 띄운다**(DEC-008).
 
 | 계층 | 리소스 | 수명 |
 | --- | --- | --- |
-| 유지(`dev-data`) | VPC·subnet, S3 file bucket, Aurora, SSM DB 비밀번호, ECR, GitHub OIDC·배포/CI role, 알람 SNS, CloudTrail·변경 알림, 예산, 백업 복제 | 계속 유지(쉬는 동안 몇 센트) |
-| 실습(`dev`) | NAT, ALB, ECS·Auto Scaling, ElastiCache, Lambda, GuardDuty 검사 계획·SQS, 대시보드·알람, DB dump task | 실습마다 apply(약 6분) → destroy |
-| 개인 계정(`backup`) | 백업 bucket·policy | 계속 유지 |
+| 유지(`dev-data`) | VPC·subnet, S3 file bucket, Aurora, SSM DB 비밀번호, ECR, GitHub OIDC·배포/CI role, 알람 SNS, CloudTrail·변경 알림, 예산 | 계속 유지(쉬는 동안 몇 센트) |
+| 실습(`dev`) | NAT, S3 gateway endpoint, ALB, ECS·Auto Scaling, ElastiCache, Lambda, GuardDuty 검사 계획·SQS, 대시보드·알람 | 실습마다 apply(약 6분) → destroy |
+| 개인 계정(`backup`) | 백업 bucket·policy | 2026-11-24 철거(DEC-025). 복제 규칙·role 삭제 완료, bucket·IAM은 콘솔 삭제 대기 |
 
 ## 4. 기술 스택과 선택 이유
 
@@ -98,7 +102,7 @@ Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 �
 | 런타임 | ECS Fargate | 노드 관리 없음, circuit breaker·rolling·Auto Scaling 내장. 1인 운영에 적합 | EKS(제어부 월 고정비·운영 부담, K8S-01 보류) |
 | DB | Aurora PostgreSQL Serverless v2 | PostgreSQL 호환 + 0 ACU 일시정지로 쉬는 비용 거의 0, PITR | RDS t4g.micro(상시 약 $14/월), Aurora 상시 0.5 ACU(약 $44/월) |
 | 캐시 | ElastiCache Redis | 온프레미스 Redis와 같은 키 계약·Lua 스크립트 | 캐시 없음(조회 지연 증가) |
-| 저장소 | S3 | 온프레미스 MinIO와 같은 S3 API, 버전 관리·복제·이벤트 | EFS(비쌈, 이벤트 없음) |
+| 저장소 | S3 (+ gateway endpoint) | 온프레미스 MinIO와 같은 S3 API, 버전 관리·이벤트. gateway endpoint는 요금 없이 NAT 처리비를 없앰 | EFS(비쌈, 이벤트 없음), interface endpoint(AZ 2개 월 $14.6, 이 구성엔 불필요), presigned URL 직접 업로드(API·멱등성·보상 재설계 필요, ARCH-01 미채택) |
 | 악성코드 검사 | GuardDuty Malware Protection for S3 | 관리형 엔진, 검사 결과를 이벤트로 받음 | ClamAV Lambda(엔진·정의 DB 운영 부담) |
 | 결과 전달 | EventBridge → SQS(+DLQ) → backend | 재시도·DLQ·순서 무관 처리. 결과가 DB보다 먼저 와도 잃지 않음 | Lambda가 DB 직접 갱신(VPC·DB 자격 증명 추가) |
 | 후처리 | Lambda(Python 3.12) | 업로드 응답 경로와 분리된 이벤트 처리 | - |
@@ -126,8 +130,9 @@ Terraform state를 둘로 나눠 **데이터는 남기고 비싼 컴퓨트만 �
 8. backend가 SQS 소비 → "PENDING이고 삭제되지 않은 행만" 조건부 UPDATE → CLEAN 또는 INFECTED(격리) → 캐시 반영
 9. GET /api/files/{id}/download: DB로 판단(캐시 안 씀)
    PENDING → 409 FILE_SCAN_PENDING / INFECTED·FAILED → 403 FILE_QUARANTINED / CLEAN → S3 스트림 반환
-10. 같은 객체가 개인 계정 백업 bucket으로 복제(수 초~수 분)
 ```
+
+목록 조회 `GET /api/files?size=20&cursor=…`는 최신순 한 페이지와 `nextCursor`를 돌려준다(PERF-02, DEC-024). 처음에는 본인 파일 전체를 배열로 돌려줬고, 파일이 쌓일수록 느려지는 것을 부하 시험이 찾아냈다([8장](#8-검증하면서-찾아-고친-결함)).
 
 ![C13 Lambda S3 트리거](assets/captures/c13-lambda-trigger.png)
 *C13. S3 `files/` ObjectCreated → Lambda `file-processor`(7a).*
@@ -167,7 +172,7 @@ terraform/
 ├── environments/
 │   ├── dev-data/         유지 계층 (원격 state, CI는 plan·drift만, 적용은 로컬)
 │   ├── dev/              실습 계층 (원격 state, CI가 승인 후 apply)
-│   └── backup/           개인 계정 백업 bucket (로컬 state, MFA role)
+│   └── backup/           개인 계정 백업 bucket (2026-11-24 철거 중, DEC-025)
 └── modules/              aurora, change-alerts, ecr, ecs, elasticache, file-processor,
                           github-actions, iam, nat, s3, security-groups, terraform-ci, vpc
 ```
@@ -224,7 +229,8 @@ main push / 수동 실행
 | `concurrency: deploy-main` | 두 배포의 겹침 | 진행 중 배포는 취소하지 않음 |
 | 배포 실패 이벤트 → SNS | circuit breaker 롤백을 아무도 모르는 것 | 이메일 수신 확인 |
 
-소요(2026-11-23 실측): test 24초, build·scan 1분 38초, staging 배포·smoke 2분 24초~3분 48초, production 4분 33초(운영 target group deregistration delay 300초가 주 원인, 단축 후보).
+소요(2026-11-23 실측): test 24초, build·scan 1분 38초, staging 배포·smoke 2분 24초~3분 48초, production 4분 33초(rollout 191초).
+소요(2026-11-24, `ff8e69b`): test 34초, build·scan 1분 58초, staging·smoke 3분 34초, 승인 후 production 5분 35초(rollout 255초 + smoke 71초). deregistration delay를 30초로 줄였지만 **rolling 배포 시간은 줄지 않았다**. 새 task가 정상 판정을 받기까지(약 2분 30초)가 대부분이다. 이전 배포의 세부 이벤트가 남아 있지 않아 190초와 255초의 차이 원인은 미확인이다. delay 단축의 효과는 장애 교체에서 확인했다([11장](#11-고가용성과-회복탄력성)).
 
 ![C22 배포 파이프라인 실행](assets/captures/c22-actions-pipeline.png)
 *C22. test → image → publish → staging → production 승인 → production.*
@@ -252,6 +258,9 @@ main push / 수동 실행
 | 12 | 정기 drift | 계층이 공유하는 SG·경로 때문에 매일 오탐 | `-refresh-only` 대신 일반 plan |
 | 13 | 위 수정 분석 | 별도 리소스로 붙인 SG 규칙 변경을 어떤 검사도 못 봄 | CloudTrail 기반 변경 알림(SEC-03) |
 | 14 | PERF-01 | 확장 뒤 메모리 정책(JVM 힙 유지)이 축소를 막아 46분 넘게 3 task(비용 3배) | 메모리 정책 확장 전용(`disable_scale_in`), 수정 뒤 3 → 1(DEC-023) |
+| 15 | PERF-01 | 목록 API가 본인 파일 전체를 반환(`owner_id` 인덱스도 없음). 시험 중 파일이 쌓이며 ALB p95 0.39 → 1.96초, 분당 요청 5,623 → 2,375 | 커서(keyset) 페이지 + `(owner_id, id)` 인덱스(PERF-02, DEC-024). 같은 조건에서 59.4 → 206.9 rps, 조회 p95 1,783 → 121ms |
+| 16 | task 중지 재실행 | 운영 target group deregistration delay 기본 300초 동안 새 task를 띄우지 않아 중단 6분 44초 | delay 30초(DEC-026). 재측정 중단 92초, 새 task가 연결 정리 시작 2초 뒤 기동 |
+| (발견) | ARCH-01 측정 | k6가 private subnet에서 ALB 공인 DNS를 호출해 **시험 트래픽이 NAT를 왕복**(기준선 응답 방향만 약 3.4GB, 약 $0.15) | 미수정. 다음 부하 시험은 k6를 VPC 밖이나 public subnet에서 실행 |
 
 작업 방식 사고도 기록했다: 로컬 apply 뒤 늦게 push한 커밋 때문에 CI가 코드 기준으로 규칙 2개를 지웠다. 교훈은 "CI가 apply하는 계층은 머지 → CI apply 순서"이고, 이후 지켰다([작업일지](worklogs/2026-11-20.md#첫-승격-배포와-ci-사고)).
 
@@ -260,9 +269,9 @@ main push / 수동 실행
 | 영역 | 적용 | 근거·검증 |
 | --- | --- | --- |
 | 네트워크 경계 | ALB만 public. ECS는 private, Aurora·Redis는 인터넷 경로 없는 database subnet | [AWS](design/AWS.md#security-group-설계) |
-| 보안 그룹 | ALB ← 80/443, app ← ALB 8080, Aurora ← app·dump task 5432, Redis ← app 6379만 | 규칙은 SG 참조(ID), CIDR 개방 없음 |
-| 최소 권한 IAM | 앱·Lambda·GuardDuty는 `files/*`만, dump task는 `backups/db/*` 쓰기만, 복제 role은 원본 읽기·대상 복제만(삭제 없음) | 신뢰 정책에 `aws:SourceAccount`·`aws:SourceArn`(혼동된 대리인 방지) |
-| 자격 증명 | 사람: `aws login` 단기 세션 + 개인 계정은 MFA role. CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
+| 보안 그룹 | ALB ← 80/443, app ← ALB 8080, Aurora ← app 5432, Redis ← app 6379만 | 규칙은 SG 참조(ID), CIDR 개방 없음 |
+| 최소 권한 IAM | 앱·Lambda·GuardDuty는 `files/*`만(백업 철거 전에는 dump task `backups/db/*` 쓰기만, 복제 role 원본 읽기·대상 복제만) | 신뢰 정책에 `aws:SourceAccount`·`aws:SourceArn`(혼동된 대리인 방지) |
+| 자격 증명 | 사람: `aws login` 단기 세션(개인 계정은 MFA role, 2026-11-24 철거 중). CI: GitHub OIDC(브랜치·environment별 subject) | 장기 access key 0개(DEC-014) |
 | CI 권한 분리 | plan role(읽기 전용, 사용자 파일·비밀값 거부) / apply role(승인 environment만, 자기 자신 수정 불가) / 배포 role(ECR·ECS 한정) | fork PR에는 OIDC 토큰 없음 |
 | 비밀값 | DB 비밀번호·JWT secret을 Terraform이 생성해 SSM SecureString에 write-only로 기록, ECS `secrets`로 주입 | task definition 환경변수에 비밀값 0개, state·plan에 평문 없음 |
 | 암호화 | S3 SSE-S3, Aurora 저장 암호화, Redis 전송·저장 암호화, state bucket TLS 강제 | CMK 미사용은 Trivy 예외에 사유·만료일 |
@@ -271,9 +280,9 @@ main push / 수동 실행
 | 애플리케이션 | BCrypt, JWT, 남의 파일 403·무토큰 401·관리자 전용 403, ALB `drop_invalid_header_fields` | V-FUNC-03 |
 | 로그 위생 | 접근 로그에 본문·쿼리·토큰·비밀번호·파일 내용 없음 | 15분 로그에서 토큰·`Bearer`·비밀번호 0건 |
 | 변경 감시 | Terraform CI 밖에서 Aurora SG·route table을 바꾸면 1분 안에 이메일(CloudTrail → EventBridge → SNS), trail 중지·규칙 비활성화도 알림 | 실제 임시 규칙으로 수신 확인(SEC-03) |
-| 백업 보호 | 개인 계정 bucket: 퍼블릭 차단·버전 관리·복제 role만 쓰기·TLS 강제, 관리 role에 버전 삭제 권한 없음 | BACKUP-01 |
+| 백업 보호 | (철거 전) 개인 계정 bucket: 퍼블릭 차단·버전 관리·복제 role만 쓰기·TLS 강제, 관리 role에 버전 삭제 권한 없음. 이 권한 설계 때문에 철거 시 사본은 사용자가 콘솔에서 직접 지워야 했다 | BACKUP-01, DEC-025 |
 
-**알려진 한계**: 도메인이 없어 실습은 HTTP다(도메인 변수만 넣으면 TLS 1.3 정책 HTTPS + 리다이렉트). WAF·VPC endpoint 미적용. 토큰 갱신·로그아웃 API 미구현. staging과 운영이 데이터 계층을 공유한다(헤더 라우팅은 보안 경계 아님).
+**알려진 한계**: 도메인이 없어 실습은 HTTP다(도메인 변수만 넣으면 TLS 1.3 정책 HTTPS + 리다이렉트). WAF 미적용. VPC endpoint는 S3 gateway만(ECR API·Logs·SSM·SQS는 NAT 경유). 토큰 갱신·로그아웃 API 미구현. staging과 운영이 데이터 계층을 공유한다(헤더 라우팅은 보안 경계 아님).
 
 ![C12 작업 정의 개요](assets/captures/c12-taskdef-secrets.png)
 *C12. 운영 서비스가 쓰는 작업 정의 `fileshare-dev-backend:16`: task role·execution role 분리, 0.5 vCPU / 1GB.*
@@ -347,7 +356,7 @@ main push / 수동 실행
 | backend `/ecs/fileshare-dev-backend` (JSON) | 14일 | 요청마다 `requestId`·`route`(ID 제거 패턴)·`status`·`durationMs` → 경로별 SLI 쿼리, 장애 시 요청 추적 |
 | 응답 헤더 `X-Request-Id` | - | 고객 문의의 요청 ID 하나로 서버 로그 전체를 찾음(저장 쿼리 `request-trace`) |
 | ECS task 중지 이벤트 `/aws/events/...-ecs-task-stopped` | 14일 | ECS가 1시간 뒤 지우는 중지 사유(exit code, health 실패)를 보존 |
-| Lambda·DB dump task 로그 | 14일 | 후처리·백업 실패 원인 |
+| Lambda 로그 | 14일 | 후처리 실패 원인 |
 | CloudTrail trail(쓰기 관리 이벤트) | 7일 | 누가 무엇을 바꿨나, 변경 알림의 원천 |
 
 ![C03 요청 ID로 로그 추적](assets/captures/c03-request-trace.png)
@@ -369,7 +378,7 @@ main push / 수동 실행
 | 캐시 장애 | DB 우회 | 캐시 없는 동안 지연 증가 |
 | DB 장애·실수 | Aurora PITR(보존 1일)·삭제 보호·최종 스냅샷 | 인스턴스 1개(reader 없음)라 장애 조치 동안 중단 |
 | 객체 삭제·덮어쓰기 | S3 버전 관리 | - |
-| 계정 정리·계정 손실 | 개인 계정으로 S3 교차 계정 복제(삭제 미반영) + DB dump | DB는 마지막 dump 시점까지 |
+| 계정 정리·계정 손실 | 2026-11-24까지: 개인 계정 S3 교차 계정 복제 + DB dump(검증 완료). 이후 철거(DEC-025) | 지금은 계정 내 PITR·S3 버전 관리뿐. 데이터가 시험 데이터라 위험 수용 |
 | AZ 장애 | subnet·ALB 2 AZ | NAT 1개, Redis 1노드, Aurora 1인스턴스는 단일 AZ |
 
 ### 실측 (장애 주입 훈련)
@@ -385,8 +394,9 @@ main push / 수동 실행
 | Lambda 실패 주입 | 없음(태그만 누락) | 약 1분 40초 | - |
 | DB PITR 복원 | - | - | RPO 104초 / RTO 15.2분, 행 수·객체·크기·해시 일치 |
 | S3 삭제 복구 | - | - | 15초, 같은 해시 |
-| 공유 계정이 Aurora를 외부에서 정지(실제 사건) | 실습 시작 시 DB 연결 불가 | dump task timeout | `start-db-cluster` 약 5분. 백업이 필요한 이유의 실례 |
-| 운영 task 강제 중지 재실행(11-24) | 약 6분 44초 503/502 | `alb-elb-5xx` 약 3분, `alb-no-healthy-target` 약 4분 40초(2분 넘는 중단의 발화 첫 확인) | 이전 task 연결 정리(deregistration delay 300초)가 끝난 뒤에야 새 task 시작. 11-20(87초)과 차이 원인 미확인 |
+| 공유 계정이 Aurora를 외부에서 정지(실제 사건) | 실습 시작 시 DB 연결 불가 | dump task timeout | `start-db-cluster` 약 5분. 계정 밖 백업을 두었던 이유의 실례 |
+| 운영 task 강제 중지 재실행(11-24 오전) | 약 6분 44초 503/502 | `alb-elb-5xx` 약 3분, `alb-no-healthy-target` 약 4분 40초(2분 넘는 중단의 발화 첫 확인) | 이전 task 연결 정리(deregistration delay 300초)가 끝난 뒤에야 새 task 시작. 11-20(87초)과 차이 원인 미확인 |
+| 같은 훈련, delay 30초(11-24 오후) | **92초** 503 | - | 연결 정리 시작 2초 뒤 새 task 시작, 28초 뒤 대상 등록(DEC-026) |
 
 ![C17 task 중지 시간대 대시보드](assets/captures/c17-task-stop-dashboard.png)
 *C17. 운영 task 강제 중지(2026-11-24 11:51 KST): ELB 5xx 급증, healthy 0 → 1 회복.*
@@ -427,10 +437,37 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 ![C21 확장·축소 한 주기](assets/captures/c21-scaling-cycle.png)
 *C21. task 수 1 → 3 → 1 전체 주기.*
 
-목표: RPO 5분 / RTO 1시간(DEC-020). 기준과 절차는 [백업 복원](design/DEPLOYMENT.md#412-1-백업-복원-ops-02), [개인 계정 백업](design/DEPLOYMENT.md#412-2-개인-계정-백업-backup-01).
+### 개선 후 재측정 (ARCH-01·PERF-02, 2026-11-24 오후)
+
+같은 k6 스크립트·같은 조건(task 최대 1개, 40 VU)으로, 목록 커서 페이지·S3 gateway endpoint·delay 30초를 적용한 뒤 다시 쟀다. 변경 전 값은 오전 기준선이다. 원본: [arch-01](assets/arch-01/), [설계 비교](proposals/ARCH-COMPARISON.md#측정한-개선).
+
+| 지표 | 변경 전 | 변경 후 |
+| --- | --- | --- |
+| 처리량 | 59.4 rps (32,141건) | **206.9 rps (113,194건)** |
+| 조회 p50 / p95 / p99 | 207 / 1,783 / 2,913ms | **11 / 121 / 199ms** |
+| 업로드 p95 | 1,694ms | **394ms** |
+| ALB p95 추이 | 0.39 → 1.96초(파일이 쌓일수록 증가) | 0.28 → 0.09초(파일 11,477건이 쌓여도 증가 없음) |
+| 오류율 | 0 | 0 |
+| 업로드 바이트당 NAT 송신 바이트 | 약 2.25배(추정: k6 → ALB + backend → S3) | 1.12배(S3 몫이 빠짐) |
+| S3 업로드·다운로드 210MB 동안 NAT 처리 | - | 0.6MB |
+| task 중지 중단 | 404초 | **92초** |
+
+- 변경 후에는 task 1개 CPU가 95~100%로 처리량 한계였고, 조회 지연은 낮게 유지됐다.
+
+![C27 개선 후 부하 대시보드](assets/captures/c27-dashboard-after.png)
+*C27. 개선 후 부하(05:50~06:00 UTC = 14:50~15:00 KST): 분당 요청이 1.8만 건까지 늘어도 응답 시간 p95가 낮게 유지된다. 변경 전 C01에서는 p95가 계속 올랐다.*
+
+![C29 대상 그룹 deregistration delay](assets/captures/c29-tg-deregistration.png)
+*C29. 운영 대상 그룹의 등록 취소 지연(draining) 30초(이전 300초).*
+
+![C30 개선 후 task 중지 이벤트](assets/captures/c30-task-stop-events-after.png)
+*C30. delay 30초에서 task 중지: draining 시작(14:46:49) 2초 뒤 새 task 시작, 14:47 등록. 변경 전 C18은 연결 정리가 끝날 때까지 약 5분 기다렸다. 중단 404초 → 92초.*
+- 한계: 세 변경을 함께 적용해 처리량 증가에서 endpoint 몫은 분리하지 않았다(업로드는 요청의 10%). `(owner_id, id)` 인덱스가 Aurora에 실제로 만들어졌는지는 DB 직접 조회 경로가 없어 확인하지 않았다. rolling 배포 시간은 줄지 않았다([7장](#7-cicd-파이프라인)).
+
+목표: RPO 5분 / RTO 1시간(DEC-020). 기준과 절차는 [백업 복원](design/DEPLOYMENT.md#412-1-백업-복원-ops-02), [개인 계정 백업](design/DEPLOYMENT.md#412-2-개인-계정-백업-backup-01)(2026-11-24 철거).
 
 ![C26 원본·백업 객체 비교](assets/captures/c26-backup-compare.png)
-*C26. 원본 `COMPLETED`, 개인 계정 사본 `REPLICA`, 같은 SHA-256.*
+*C26. 원본 `COMPLETED`, 개인 계정 사본 `REPLICA`, 같은 SHA-256(2026-11-24 철거 전 이력).*
 
 ## 12. 비용
 
@@ -440,10 +477,9 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | --- | --- |
 | 유지/실습 계층 분리 | NAT·ALB·Fargate·Redis는 켜진 시간만큼 과금 → 실습 때만. 데이터는 유지 |
 | Aurora 0 ACU 자동 일시정지 | 비교(2026-11-18): 0.5 ACU 상시 약 $44/월, RDS t4g.micro 상시 약 $14/월, 0 ACU는 스토리지만(몇 센트) |
-| NAT 1개 | AZ별 NAT는 고정비 두 배. 실습 환경의 가용성 요구보다 비용 우선 |
+| NAT 1개 + S3 gateway endpoint | AZ별 NAT는 고정비 두 배. 실습 환경의 가용성 요구보다 비용 우선. S3 트래픽의 NAT 처리비($0.045/GB)는 무료 endpoint로 없앰(DEC-026) |
 | SSM Standard, CMK 미사용 | 비밀값·키 월 고정비 없음 |
 | 로그 보존 14일, trail 사본 7일 | 저장 비용 상한 |
-| 백업 Standard 클래스 | 현재 278MB·소형 파일 다수에서는 Glacier IR의 128KB 최소 과금·요청비가 절감액보다 큼(DEC-022) |
 | 예산 $10 + 이메일(실제 50/80/100%, 예측 100%) | 공유 계정 한도 |
 
 ### 규모 (정가 기준 추정, 실제 청구로 확인 전)
@@ -452,15 +488,33 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | --- | --- |
 | 실습 계층이 떠 있을 때 | 시간당 약 $0.2~0.3 (NAT 약 $0.045 + ALB 약 $0.023 + Fargate 2 task 약 $0.05 + Redis 약 $0.016 + Aurora 활성 ACU) |
 | 쉬는 동안 | 월 $1 미만(S3·Aurora 스토리지, ECR 이미지, 알람 SNS) |
-| 개인 계정 백업 | 월 1센트 미만(약 18MB, 같은 리전 복제라 전송료 없음) |
 
-**한계**: 예산이 Owner 태그로 필터되는데, 2026-11-23 Cost Explorer에서 Owner 태그 비용이 0으로 나왔다. Owner가 비용 할당 태그로 활성화되지 않은 것으로 보이며 조직 관리자 확인이 필요하다. 그래서 위 금액은 실제 청구가 아니라 추정이다. 측정 기반 비용 비교는 ARCH-01(**미실행**).
+**한계**: 예산이 Owner 태그로 필터되는데, 2026-11-23 Cost Explorer에서 Owner 태그 비용이 0으로 나왔다. Owner가 비용 할당 태그로 활성화되지 않은 것으로 보이며 조직 관리자 확인이 필요하다. 그래서 위 금액은 실제 청구가 아니라 추정이다.
+
+### 설계 비교 (ARCH-01, us-east-1 정가, 산정일 2026-11-24)
+
+AWS Pricing API로 조회한 정가 기준 추정이다. 가정: AZ 2개, 상시 730시간, DB 20GB, ALB LCU 1개, NAT 처리 데이터는 별도. 상세는 [설계 비교](proposals/ARCH-COMPARISON.md).
+
+| 구성 | 상시 운영(월) | 실습 시간당 |
+| --- | --- | --- |
+| 저비용 실습 구성(현재) | 약 $158 | 약 $0.22 |
+| 가용성 강화(운영 task 2, AZ별 NAT, Redis 복제본, Aurora reader) | 약 $268(DB를 RDS Multi-AZ로 하면 약 $232) | 약 $0.37 |
+
+| 비교 | 결론 | 핵심 근거 |
+| --- | --- | --- |
+| ECS Fargate vs EKS | ECS 유지 | EKS 클러스터만 월 $73 추가 + add-on·버전 관리 부담(K8S-01 보류) |
+| Aurora Serverless v2 vs RDS | 실습은 Aurora 유지 | 쉬는 동안 0 ACU. 한 달 약 230시간 넘게 깨어 있으면 RDS `t4g.micro`($14.0)가 쌈 |
+| NAT 1개 vs AZ별 vs Regional | 1개 유지 | AZ별은 $36.6 → $73.2. Regional NAT는 과금 방식 미확인으로 후보만 |
+| S3 endpoint 없음/gateway/interface | **gateway 채택** | 요금 $0, NAT 장애 때도 S3 경로 유지. interface는 AZ 2개 월 $14.6 |
+| ECS 중계 vs presigned URL | 중계 유지 | presigned는 API·멱등성·보상·검사 흐름 재설계 필요, 10MiB 한도에서 절감은 몇 센트 |
+
+이 실습에서 가장 큰 변동비는 부하 시험 트래픽의 NAT 왕복이었다([8장](#8-검증하면서-찾아-고친-결함) 발견 항목).
 
 ## 13. 검증 전략과 결과
 
 | 층위 | 방법 | 결과 |
 | --- | --- | --- |
-| 단위·통합 테스트 | JUnit, H2(PostgreSQL 모드), 모의 Redis·S3, 응답 없는 Redis 포트, 실제 서블릿 multipart 한도 | 67개 통과, PR마다 CI |
+| 단위·통합 테스트 | JUnit, H2(PostgreSQL 모드), 모의 Redis·S3, 응답 없는 Redis 포트, 실제 서블릿 multipart 한도, 목록 페이지 경계·잘못된 값 | 69개 통과, PR마다 CI |
 | 계층 규칙 | 서비스가 API DTO·보안 타입을 모르게(LAYER-01/02) | 테스트로 고정 |
 | 온프레미스 기준선 | V-ONP·V-FUNC·V-DATA·V-IDEM·V-FAIL·V-ADMIN 시나리오와 Lua 버전 비교, 18개 항목 | 전부 통과(11-17) |
 | 배포 전 로컬 검증 | 같은 이미지를 `s3` 프로필·컨테이너 한도로(V-LOC) | 통과, DB 일시정지 기동 문제 발견(DEC-010) |
@@ -470,8 +524,9 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | 관측 | 요청 ID 추적, SLI, 알람 발화·이메일 | 통과 |
 | 배포 통제 | drill A(기동 실패)·drill B(기능 실패) | 둘 다 자동 롤백 |
 | IaC | PR plan, 승인 apply, drift 주입·복구, 잠금·state 복구 | 통과 |
-| 백업 | 복제·삭제 미반영·dump·체크섬·경계 | 통과 |
+| 백업 | 복제·삭제 미반영·dump·체크섬·경계 | 통과(11-23), 2026-11-24 철거 |
 | 부하·확장 | k6 기준선(task 1) vs Auto Scaling(1~4) | **완료**(PERF-01). 처리량 +23%, 축소 결함 발견·수정. 목록 API 페이지 처리 없음이 p95 한계 |
+| 설계 비교·개선 | 정가 비교 + 개선 3건을 같은 조건으로 재측정(ARCH-01, PERF-02) | **완료**. 처리량 3.5배, 조회 p95 1,783 → 121ms, task 교체 중단 404 → 92초, S3 트래픽 NAT 경유 0 |
 
 시나리오 정의와 판정 기준은 [VALIDATION](design/VALIDATION.md).
 
@@ -483,21 +538,22 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | 배포 | main 머지 → 자동 staging → 승인 → production. 수동 실행도 가능 |
 | 인프라 변경 | PR(plan 검토) → 머지 → `terraform-dev` 승인 → 저장된 plan apply |
 | 알람 수신 | [런북](design/DEPLOYMENT.md#411-1-알람-대응-obs-02): 대시보드 → 요청 ID 추적 → 서비스 이벤트 |
-| 실습 종료 | `scripts/db-backup.sh`(dump → 개인 계정) → `dev` destroy → `dev-data` plan 변경 없음 확인 |
-| 부하 시험 | 복제 일시 중지 → 시험 → 시험 데이터 정리 → 복제 재개 |
+| 실습 종료 | 남길 로그·지표 내보내기 → `dev` destroy → `dev-data` plan 변경 없음 확인 |
+| 부하 시험 | 새 사용자로 시험 → 결과·지표 보존(복제 철거로 일시 중지 단계 없음) |
 | 문제 해결 | [TROUBLESHOOTING](TROUBLESHOOTING.md)(증상·원인·해결·재검증 형식) |
 
 ## 15. 한계와 다음 단계
 
 | 항목 | 상태 | 계획 |
 | --- | --- | --- |
-| 부하·확장(PERF-01) | 완료(2026-11-24). 목록 API가 페이지 처리 없이 전체를 반환해 데이터가 쌓이면 느려짐 | 목록 API 페이지 처리, 재측정 |
-| task 교체 중단 | 2026-11-24 재실행에서 약 6분 44초(11-20 87초), 원인 미확인 | 운영 deregistration delay 300초 → 30~60초, 최소 task 2 |
-| 비용·설계 비교(ARCH-01) | **미실행** | NAT 1 vs AZ별, S3 endpoint, ECS 중계 vs presigned URL, Aurora vs RDS를 측정 근거로 |
+| 부하·확장(PERF-01/02) | 완료. 목록 API 커서 페이지로 같은 조건 처리량 3.5배(PERF-02) | k6 실행 위치를 바꿔 NAT 왕복 없이 재시험 |
+| task 교체 중단 | delay 30초로 92초(이전 6분 44초) | 최소 task 2로 중단 자체를 없애기 |
+| 비용·설계 비교(ARCH-01) | 완료(정가 추정 + 개선 3건 재측정) | Regional NAT 과금 방식 확인, 실제 청구로 검증 |
 | 단일 AZ 요소 | NAT·Redis·Aurora 인스턴스 | 운영 전환 시 AZ별 NAT, Redis 복제본, Aurora reader |
 | HTTPS | 도메인 없음 | 변수 2개로 활성화(코드 준비됨) |
-| 배포 속도 | 운영 4분 33초 | deregistration delay 300초 → 30~60초 |
+| 배포 속도 | 운영 rollout 190~255초. delay 단축으로는 줄지 않음 | 새 task 정상 판정 시간(health check 간격·grace) 조정 검토 |
 | 데이터 이전 | 하지 않음(시험 데이터뿐, DEC-007) | 실제 이전이면 `pg_dump`/`pg_restore` + 객체 동기화 |
+| 계정 밖 백업 | 검증 후 철거(DEC-025) | 실제 운영이면 다시 둔다(교차 계정 복제 + 스냅샷 공유) |
 | 비용 실측 | Owner 비용 할당 태그 확인 필요 | 관리자 확인 후 Cost Explorer로 |
 | Kubernetes | 보류(K8S-01) | 목표 직무 필요 시 EKS 비교 |
 
@@ -507,9 +563,9 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 2. **아키텍처**(4분): 3장 그림. 계층 분리, 같은 이미지가 프로필로 환경을 바꾼다는 점.
 3. **E2E 흐름**(3분): 업로드 → 비동기 검사 → 검사 전 다운로드 차단. 실패 표에서 "결과 불명이면 지우지 않는다".
 4. **배포 파이프라인**(4분): digest 하나가 staging → 승인 → production. drill B 3분 13초 롤백을 화면으로.
-5. **운영**(4분): 대시보드·SLI·알람 기준과 이유. 장애 훈련 표, 부하 시험에서 찾은 축소 결함, 찾은 결함 14건.
-6. **보안·비용**(2분): 장기 키 0개, 비밀값 state 밖, 쉬는 비용 월 $1 미만.
-7. **한계와 다음 단계**(1분): 단일 AZ 요소, 목록 API 페이지 처리, ARCH-01이 남았다고 먼저 말한다.
+5. **운영**(4분): 대시보드·SLI·알람 기준과 이유. 장애 훈련 표, 부하 시험에서 찾은 축소 결함, 찾은 결함 16건. 측정 → 개선 → 재측정(처리량 3.5배, 교체 중단 404 → 92초).
+6. **보안·비용**(2분): 장기 키 0개, 비밀값 state 밖, 쉬는 비용 월 $1 미만. 정가 비교로 고른 것(gateway endpoint)과 고르지 않은 것(EKS·presigned URL·AZ별 NAT).
+7. **한계와 다음 단계**(1분): 단일 AZ 요소, 배포 시간이 줄지 않은 것, 부하 시험의 NAT 왕복, 계정 밖 백업 철거를 먼저 말한다.
 
 ## 17. 증빙
 
@@ -517,7 +573,7 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 
 | 자료 | 내용 | 비고 |
 | --- | --- | --- |
-| [아키텍처 페이지](assets/architecture-overview.html) | 온프레미스·AWS 구성도, 패키지·계층·의존성, 업로드 흐름, Terraform 모듈, CI/CD | GuardDuty·staging·백업 이전 그림. 갱신 필요 |
+| [아키텍처 페이지](assets/architecture-overview.html) | 온프레미스·AWS 구성도, 패키지·계층·의존성, 업로드 흐름, Terraform 모듈, CI/CD | GuardDuty·staging·S3 gateway endpoint 이전 그림. 갱신 필요 |
 | ![AWS Architecture](assets/portfolio-aws-architecture.png) | AWS 구성 | 위와 같음 |
 
 ### 작업별 근거
@@ -532,9 +588,10 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | 승격 배포·롤백 | CICD-02/03 | 완료 | [11-20](worklogs/2026-11-20.md#첫-승격-배포와-ci-사고), [11-23](worklogs/2026-11-23.md#실습-sec-02-배포iac-03-driftcicd-03-drill-b) |
 | IaC CI·drift | IAC-01/03 | 완료 | [11-23](worklogs/2026-11-23.md#실습-sec-02-배포iac-03-driftcicd-03-drill-b) |
 | 비밀값·공급망·변경 감시 | SEC-01/02/03 | 완료 | [11-20](worklogs/2026-11-20.md#sec-01-비밀값-주입), [11-23](worklogs/2026-11-23.md#sec-03-terraform-밖-네트워크-변경-알림) |
-| 계정 밖 백업 | BACKUP-01 | 완료 | [11-23](worklogs/2026-11-23.md#backup-01-개인-계정-백업) |
+| 계정 밖 백업 | BACKUP-01 | 완료 후 철거(DEC-025) | [11-23](worklogs/2026-11-23.md#backup-01-개인-계정-백업), [11-24 철거](worklogs/2026-11-24.md#개인-계정-백업-철거-dec-025) |
 | 부하·확장 | PERF-01 | 완료 | [11-24](worklogs/2026-11-24.md#perf-01-부하확장-v-perf-03) |
-| 비용·설계 비교 | ARCH-01 | 미실행 | - |
+| 목록 커서 페이지 | PERF-02 | 완료 | [11-24](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정), [API](design/API.md#get-apifiles) |
+| 비용·설계 비교 | ARCH-01 | 완료 | [설계 비교](proposals/ARCH-COMPARISON.md), [11-24](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정), [원본](assets/arch-01/) |
 
 ### 화면 캡처 목록
 
@@ -571,14 +628,19 @@ AWS 안의 k6 ECS task로 40 VU(증가 2분·유지 6분·감소 1분), 단건 �
 | C24 | `c24-terraform-drift.png` | GitHub Actions run 45123423656 summary | `drift (dev)` 실패·변경 1건, 승인 apply | [6장](#6-iac-terraform-구성과-운영-방식) | 언제든 | 완료 |
 | C25 | `c25-s3-object-tags.png` | S3 → 파일 bucket → `files/` 객체 → 태그 | `GuardDutyMalwareScanStatus`, Lambda 태그 | 5장 | 언제든 | 완료 |
 | C25b | `c25b-s3-threat-tags.png` | S3 → 파일 bucket → EICAR 시험 객체(11-20) → 태그 | `GuardDutyMalwareScanStatus = THREATS_FOUND` | 5장 | 언제든 | 완료 |
-| C26 | `c26-backup-compare.png` | 터미널 `head-object`(원본·사본) | `COMPLETED`/`REPLICA`, 같은 SHA-256 | 11장 | 언제든 | 완료 |
+| C26 | `c26-backup-compare.png` | 터미널 `head-object`(원본·사본) | `COMPLETED`/`REPLICA`, 같은 SHA-256(2026-11-24 철거 전 이력) | 11장 | 언제든 | 완료 |
+| C27 | `c27-dashboard-after.png` | 대시보드 `fileshare-dev-service`, 2026-11-24 14:45~15:02 KST | 요청 수, ALB p95 0.28 → 0.09초, task 1 CPU 100%(C01과 비교) | 11장 | 지금 | 완료 |
+| C28 | `c28-s3-gateway-endpoint.png` | VPC → 엔드포인트 `fileshare-dev-s3-gateway` → 라우팅 테이블 | 유형 Gateway, `fileshare-dev-private-rt` 연결 | 3장 | 지금 | 완료 |
+| C29 | `c29-tg-deregistration.png` | EC2 → 대상 그룹 `fileshare-dev-backend` → 속성 | 등록 취소 지연 30초 | 11장 | 지금 | 완료 |
+| C30 | `c30-task-stop-events-after.png` | 서비스 `fileshare-dev-backend` → 이벤트, 14:46~14:48 KST | draining 시작 → 2초 뒤 새 task 시작 → 등록(C18과 비교) | 11장 | 지금 | 완료 |
+| C31 | `c31-paged-list.png` | 터미널 또는 test-ui | `?size=2` 응답의 `items`·`nextCursor` | 5장 | 지금 | 생략(production 확인은 [작업일지](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정)) |
 
 ALB의 리스너·네트워크 매핑·보안·모니터링 탭과 개별 지표 화면은 캡처하지 않는다. 같은 내용을 2026-11-24 [작업일지](worklogs/2026-11-24.md)의 구성 스냅숏 표와 `assets/perf-01/` 원본 데이터로 남긴다.
 
 ## 관련 문서
 
 - [DESIGN](DESIGN.md): 구조와 데이터 흐름
-- [DECISIONS](DECISIONS.md): 결정과 대안(DEC-001~022, ADR-001~002)
+- [DECISIONS](DECISIONS.md): 결정과 대안(DEC-001~026, ADR-001~002)
 - [DEPLOYMENT](design/DEPLOYMENT.md): 로컬 호스트·온프레미스·AWS 배포, 런북
 - [MIGRATION](design/MIGRATION.md): 전환 절차
 - [VALIDATION](design/VALIDATION.md): 검증 시나리오와 SLI

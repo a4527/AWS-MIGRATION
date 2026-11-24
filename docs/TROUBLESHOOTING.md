@@ -228,7 +228,7 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 
 ## pg_dump task가 timeout expired로 실패함
 
-- 증상: `scripts/db-backup.sh`나 일회성 `psql` task에서 `connection to server at "fileshare-dev-aurora.cluster-..." port 5432 failed: timeout expired`, pg-dump 컨테이너 exit 2. 보안 그룹 규칙(dump SG → Aurora 5432)은 있다.
+- 증상: 일회성 `psql`·`pg_dump` task(`scripts/db-backup.sh`는 2026-11-24 개인 계정 백업 철거로 삭제, [DEC-025](DECISIONS.md#결정-목록))에서 `connection to server at "fileshare-dev-aurora.cluster-..." port 5432 failed: timeout expired`, pg-dump 컨테이너 exit 2. 보안 그룹 규칙(dump SG → Aurora 5432)은 있다.
 - 원인: Aurora 클러스터가 일시정지(0 ACU)가 아니라 **정지**(`stopped`) 상태였다. 일시정지는 첫 연결에서 약 15초 만에 깨어나지만, 정지된 클러스터는 연결로 깨어나지 않는다. 2026-11-23 확인한 이벤트: 11-20 08:57Z 실습 종료 후 일시정지 → 17:18Z 백그라운드 작업으로 재개 → 17:29Z `DB cluster stopped`. 우리 작업일지에 정지 기록이 없어 공유 계정 정리 정책으로 추정한다(미확인). backend service도 같은 이유로 task가 뜨지 못한다.
 - 해결 방법: `aws rds describe-db-instances`로 상태가 `stopped`인지 보고 `aws rds start-db-cluster --db-cluster-identifier fileshare-dev-aurora`로 시작한다. `available`까지 약 5분 걸렸다. 정지된 클러스터는 7일 뒤 AWS가 자동으로 다시 시작한다.
 - 재검증 방법·결과: 2026-11-23 05:42:50Z 시작 → 05:48:13Z `available`, 이후 `psql` task와 `pg_dump` task 성공.
@@ -244,5 +244,5 @@ ECS 배포·ALB health·HTTPS·S3 권한·Aurora/ElastiCache 연결의 초기 �
 
 - 증상: 운영 서비스(desired 1)의 task를 `StopTask`로 멈추자 `deregistered`·`draining` 이벤트 뒤 5분 넘게 새 task가 없고 ALB가 503을 낸다. 2026-11-24 중단 약 6분 44초.
 - 원인(관찰): 새 task는 운영 target group의 deregistration delay 300초가 끝난 직후(02:56:37Z) 시작했다. 2026-11-20 같은 시험에서는 87초 만에 복구돼, 무엇이 달라졌는지는 확인하지 못했다(미확인).
-- 해결 방법(후보, 미적용): 운영 target group deregistration delay를 30~60초로 줄이고, 운영 최소 task를 2로 둔다(예시 tfvars). 배포 시간(운영 4분 33초)도 함께 줄어든다.
-- 재검증 방법: 같은 `StopTask` 시험으로 중단 시간을 다시 잰다.
+- 해결 방법: 운영 target group deregistration delay를 30초로 줄였다(2026-11-24, `ecs_deregistration_delay_seconds`, [DEC-026](DECISIONS.md#결정-목록)). 운영 최소 task 2개(예시 tfvars)는 비용 때문에 실습에서 적용하지 않았다.
+- 재검증 방법·결과: 같은 `StopTask` 시험으로 2026-11-24 05:46:30Z에 다시 쟀다. 연결 정리 시작 2초 뒤 새 task가 시작했고, 중단은 92초(05:46:52Z~05:48:24Z)였다. rolling 배포 시간은 줄지 않았다(delay 300초 때 rollout 190·191초, 30초 뒤 255초). 결과 해석은 [설계 비교](proposals/ARCH-COMPARISON.md#측정한-개선).

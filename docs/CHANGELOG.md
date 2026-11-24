@@ -1,5 +1,10 @@
 사용자 기능·동작 변경을 기록한다. 확인 가능한 릴리스별 변경 근거가 없어 과거 이력을 소급 작성하지 않았다. 문서 정리와 작업 등록의 수행 근거는 [작업일지](worklogs/2026-11-16.md), 현재 범위는 [PROGRESS](PROGRESS.md)를 따른다.
 
+## 2026-11-24 (AWS 실습 계층 배포, `ff8e69b`)
+
+- **호환성 깨짐**: `GET /api/files`가 페이지 단위로 응답한다. `size`(기본 20, 최대 100)와 `cursor`(이전 응답의 `nextCursor`)를 받고, 응답 `data`가 배열에서 `{ "items": [...], "nextCursor": "…" | null }` 객체로 바뀌었다. 최신순(`fileId` 내림차순)이고, 잘못된 `size`·`cursor`는 `VALIDATION_ERROR`(400)다. 이전에는 본인 파일 전체를 배열로 돌려줘 파일이 많을수록 느려졌다(PERF-02, [DEC-024](DECISIONS.md#결정-목록), [API](design/API.md#get-apifiles)).
+- 근거: [작업일지](worklogs/2026-11-24.md#arch-01perf-02-변경-후-측정)
+
 ## 2026-11-23 (미배포)
 
 - 백엔드를 Spring Boot 4.1.3(Spring Framework 7.0.11, Spring Security 7.1.3, Hibernate 7.4, Jackson 3, Tomcat 11)으로 올렸다. spring-webmvc 취약점 2건(CVE-2026-47884·47890)의 예외가 필요 없어졌다. API 요청·응답 형식과 오류 코드는 바뀌지 않았다.

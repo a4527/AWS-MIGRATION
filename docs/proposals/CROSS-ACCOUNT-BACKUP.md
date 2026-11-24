@@ -1,4 +1,4 @@
-- 상태: B + B-2 채택(2026-11-19, [DEC-012](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md)). A·C·D·B-1은 미채택으로 보존. 구현은 BACKUP-01
+- 상태: B + B-2 채택(2026-11-19, [DEC-012](../DECISIONS.md#결정-목록), [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md)). A·C·D·B-1은 미채택으로 보존. 구현은 BACKUP-01. 2026-11-24 철거([DEC-025](../DECISIONS.md#결정-목록)): 검증이 끝났고 시험 데이터뿐이라 복제·dump task·개인 계정 bucket을 지웠다. 아래 비교는 당시 판단으로 보존한다.
 - 작성일: 2026-11-19
 - 관련: [OPS-02](../TASKS.md#3단계---운영-검증보강), [DEC-007](../DECISIONS.md#결정-목록)·[DEC-008](../DECISIONS.md#결정-목록)·[DEC-009](../DECISIONS.md#결정-목록), [작업일지](../worklogs/2026-11-19.md#개인-계정-백업-준비)
 

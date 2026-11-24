@@ -134,7 +134,7 @@ def deploy():
     end = now()
     log(f"rollout {d['rolloutState']} in {(end - start).total_seconds():.0f}s")
     for e in reversed(aws("ecs", "describe-services", "--cluster", CL, "--services", SV)["services"][0]["events"][:8]):
-        if e["createdAt"] >= iso(start).replace("Z", ""):
+        if datetime.datetime.fromisoformat(e["createdAt"]) >= start:
             log("  event", e["createdAt"][11:19], e["message"][:160])
     report_nat("deploy", start, end)
 
@@ -166,7 +166,7 @@ def stop():
     else:
         log("no outage observed")
     for e in reversed(aws("ecs", "describe-services", "--cluster", CL, "--services", SV)["services"][0]["events"][:8]):
-        if e["createdAt"] >= iso(t0).replace("Z", ""):
+        if datetime.datetime.fromisoformat(e["createdAt"]) >= t0:
             log("  event", e["createdAt"][11:19], e["message"][:160])
 
 

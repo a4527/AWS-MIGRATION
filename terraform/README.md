@@ -7,11 +7,12 @@ terraform/
 ├── bootstrap/      # 원격 state용 S3 bucket (로컬 state, 처음 한 번)
 ├── environments/
 │   ├── dev-data/   # 유지 계층: VPC, S3, Aurora (계속 유지)
-│   ├── backup/     # 개인 AWS 계정 백업 bucket (로컬 state, MFA role 프로필)
+│   ├── backup/     # 개인 AWS 계정 백업 bucket. 2026-11-24 철거 중(DEC-025), bucket 삭제 후 제거
 │   └── dev/        # 실습 계층: NAT, ALB/ECS, Lambda, Redis (실습마다 apply/destroy)
 │       ├── backend.tf            # S3 backend (bucket은 backend.hcl)
 │       ├── backend.hcl.example
 │       ├── data.tf
+│       ├── endpoints.tf          # S3 gateway endpoint (DEC-026)
 │       ├── main.tf
 │       ├── outputs.tf
 │       ├── providers.tf
@@ -105,6 +106,8 @@ terraform destroy                       # 실습 종료 시 dev만
 - `ecs_task_cpu`: Fargate task CPU units
 - `ecs_task_memory`: Fargate task memory
 - `ecs_desired_count`: ECS service 생성 시 task 수. 생성 후에는 Auto Scaling이 관리
+- `ecs_deregistration_delay_seconds`: 실습 계층. 운영 target group 연결 정리 대기(기본 30초, ALB 기본 300초, [DEC-026](../docs/DECISIONS.md#결정-목록))
+- `s3_gateway_endpoint_enabled`: 실습 계층. private route table의 S3 gateway endpoint(기본 켬, [DEC-026](../docs/DECISIONS.md#결정-목록))
 - `app_jwt_secret_version`: 실습 계층. 올리면 JWT secret을 새로 만들어 SSM에 쓴다
 - `github_repository`·`github_branch`: 유지 계층. GitHub Actions OIDC assume을 허용할 repository·branch([DEC-015](../docs/DECISIONS.md#결정-목록))
 - `aurora_master_password_version`: 유지 계층. 올리면 Aurora 비밀번호를 새로 만들어 Aurora와 SSM에 쓴다
