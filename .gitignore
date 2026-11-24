@@ -30,3 +30,6 @@ override.tf.json
 
 # Terraform backend settings (bucket name) per layer
 backend.hcl
+
+# Local tool installers
+*.deb

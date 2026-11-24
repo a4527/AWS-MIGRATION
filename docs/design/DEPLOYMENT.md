@@ -967,7 +967,7 @@ S3 객체 복원: `aws s3api list-object-versions --prefix <key>`로 삭제 마�
 2026-11-23에 구현한 개인 AWS 계정 백업(S3 교차 계정 복제 + `pg_dump` task, [ADR-002](../adr/002-CROSS-ACCOUNT-BACKUP.md))은 2026-11-24에 철거했다([DEC-025](../DECISIONS.md#결정-목록)). 복제(BACKUP-01)와 복원(OPS-02) 검증이 끝났고, 데이터는 시험 데이터뿐이며 프로젝트가 끝나면 모두 지울 예정이기 때문이다. 구성·실측은 [2026-11-23 작업일지](../worklogs/2026-11-23.md#backup-01-개인-계정-백업)에 남아 있다.
 
 - 부트캠프 계정: 복제 규칙·복제 role을 `dev-data`에서 제거했다(2026-11-24 apply). 실습 계층의 dump task definition·SG·로그 그룹과 `scripts/db-backup.sh`도 지웠다.
-- 개인 계정: 백업 bucket은 role에 `s3:DeleteObjectVersion`이 없어 사용자가 콘솔에서 비우고 지운다. IAM user·MFA role도 Terraform 밖에서 만들었으므로 콘솔에서 지운다. 그 뒤 `terraform/environments/backup`과 로컬 state를 삭제한다.
+- 개인 계정: 백업 bucket은 role에 `s3:DeleteObjectVersion`이 없어 사용자가 콘솔에서 비우고 지웠다(2026-11-24, 공개 엔드포인트 `NoSuchBucket` 확인). `terraform/environments/backup`과 로컬 state를 지웠다. IAM user·MFA role은 Terraform 밖에서 만든 것이고 비용이 없어 사용자가 남겨 두기로 했다.
 - 영향: 계정 밖 사본이 없다. 남은 보호는 계정 안 PITR(1일)·최종 스냅샷·S3 버전 관리([4.12-1](#412-1-백업-복원-ops-02))다.
 
 시험 데이터를 대량으로 만드는 실습(PERF-01)은 이제 복제를 멈출 필요가 없다. 실습 후 시험 사용자(`perf-*@example.com`)의 `files`·`upload_requests`·`users` 행을 한 트랜잭션으로 지우고, 그 `storage_path`의 모든 객체 버전을 지우는 정리는 그대로 한다.
